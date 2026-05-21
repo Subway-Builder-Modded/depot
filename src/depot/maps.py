@@ -1,6 +1,7 @@
 import sys, os
 import subprocess
 import shutil
+import requests
 import json
 import math
 from concurrent.futures import ProcessPoolExecutor
@@ -448,7 +449,7 @@ class MapGen:
         Queries Overture Maps S3 bucket using DuckDB and saves to GeoJSON.
         """
         # Update this string when Overture releases a new version
-        OVERTURE_RELEASE = "2026-03-18.0"
+        OVERTURE_RELEASE = self._get_latest_overture_release()
         
         buildings_pkl = os.path.join(self.city_dir, "buildings.pkl")
         self.buildings_geojson = os.path.join(self.city_dir, 
@@ -515,6 +516,13 @@ class MapGen:
         if self.verb:
             print(f"Saving to {self.buildings_geojson}...", flush=True)
         gdf.to_file(self.buildings_geojson, driver='GeoJSON')
+    
+    @staticmethod
+    def _get_latest_overture_release():
+        response = requests.get("https://stac.overturemaps.org/catalog.json")
+        response.raise_for_status()
+        data = response.json()
+        return data.get("latest")
     
     def get_utm_epsg(self):
         """

@@ -41,8 +41,11 @@ class MapGen:
     extract_base_data : osmium extract for base layers.
     _convert_to_game_format : Converts GeoJSON buildings into a spatial grid-
                               indexed JSON for the game engine.
+    create_buildings_index_binary : Converts GeoJSON buildings into packed 
+                                    binary index streams (.bin and .bin.gz).
     _fetch_overture_buildings : Queries Overture Maps S3 bucket using DuckDB 
                                 and saves to GeoJSON.
+    _get_latest_overture_release : Queries the latest version of Overture maps.
     get_utm_epsg : Calculates the UTM EPSG code using the instance's bbox 
                    attribute.  Automatically called when bbox is set.
     process_buildings : Overture fetch -> Mapshaper cleanup -> Game conversion.
@@ -53,6 +56,12 @@ class MapGen:
     _apply_jq : Internal helper for JQ operations.
     _buffer_linestrings : Internal helper to convert LineStrings to Polygons 
                           (buffer fix).
+    _calculate_buffer : Internal helper to calculate a buffer size for 
+                        LineStrings based on the zoom level.
+    load_bathymetry_data : Connects to GEBCO's bathymetry data via OPeNDAP 
+                           and processes it into SB's ocean_depths_index format.
+    _generate_ocean_depth_tiles : Creates ocean_foundations mbtiles from the 
+                                  ocean_depth_index.json.
     _get_kind_and_rank : Helper to map OSM/Planetiler tags to game-engine 
                          specific kinds and ranks.
     _process_tile_worker : Worker function to handle vector tile re-mapping.
@@ -60,15 +69,27 @@ class MapGen:
                   schema and hierarchy.
     _generate_building_tiles : Processes building GeoJSON into zoom-specific 
                                MBTiles using mapshaper and tippecanoe.
+    _set_default_building_height : Sets default building height for buildings 
+                                   geojson file.
+    _create_building_foundation_files : Calculates the building foundation depths 
+                                        and stores as mbtiles.
+    _calculate_building_foundation : Calculates the foundation depth for a single 
+                                     building.
     _update_mbtiles_metadata : Sqlite3 metadata update.
     _validate_env : Checks if all required CLI tools are installed and 
                     accessible.
     rename_geojson_property : Renames a GeoJSON property key using jq.
     check_labels : Checks city.osm.pbf and reports the types and counts of places.
     add_labels : Extraction and tiling for labels. 
+    _combine_geojson_labels : Merge user labels into OSM labels.
     _validate_places : Ensures cities/suburbs/neighborhoods are valid entries.
     _validate_additional_places : Ensures additional cities/suburbs/
-                                  neighborhoods are valid entries.
+                                  neighborhoods are valid files.
+    _rewrite_label_geojson_names : Normalizes feature properties.name based on 
+                                   label_name_language.
+    _select_label_name : Returns the label text to store in properties.name.
+    _get_road_name_jq_expression : Returns the jq expression used to populate 
+                                   roads.geojson name.
     """
     def __init__(self, city, bbox, osmpbf=None, outputdir='.', 
                        building_index_filter_size=40, 

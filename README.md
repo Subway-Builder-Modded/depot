@@ -15,6 +15,12 @@ This library is confirmed to work with the following Python package versions:
 | pandas             | 2.3.3         |
 | shapely            | 2.1.2         |
 | duckdb             | 1.5.1         |
+| tqdm               | 4.68.2        |
+| xarray             | 2026.4.0      |
+| httpx              | 0.28.1        |
+| mercantile         | 1.2.1         |
+| netcdf4            | 1.7.4         |
+| osmnx              | 2.1.0         |
 
 Users can prepare a [conda](https://docs.conda.io/projects/conda/en/stable/index.html) 
 environment with these package versions using the supplied environment file:
@@ -81,7 +87,11 @@ custom maps.  This is handled through the `MapGen` class.
 | `road_name_preferred_language`             | str or None. Preferred OSM language code suffix for road names in `roads.geojson`. For example, `en` prefers `name:en` and falls back to `name`. Default: None |
 | `buildings_geojson`     | str or None. If a string, path to a buildings.geojson file to use as input. If None, fetches Overture buildings. Default: None |
 | `redownload_buildings`  | bool. Determines whether to re-fetch buildings (True) or load previously-saved buildings if available (False). Default: False        |
+| `create_building_foundations`  | bool. Determines whether to calculate buildings foundations layer.  Increases PMTiles size, but enables the map layer ingame.  If False, a default foundation of 10 m is used and the ingame map layer is disabled. Default: True        |
+| `create_ocean_foundations`     | bool. Determines whether to calculate ocean foundations layer.  When enabled, tracks cannot be built within water, only above the water or below the sea/lake/river bed.  If False, players can build anywhere in the water without restriction.  When enabled, only slight increase to PMTiles size. Default: True        |
+| `reprocess_bathymetry_data`    | bool. Determines whether to read previously calculated bathymetric data if available or recalculate it fresh. Default: True        |
 | `color_military_like_aerodrome`  | bool. If True, military bases are colored on the map the same as airports. If False, it looks like any other ordinary tile. Default: True  |
+| `maxzoom`          | int. Maximum zoom level for maps. Default: 15         |
 | `ncores`           | int. Number of cores to use when processing tiles in parallel. Setting this to None will use all available cores. Default: 1         |
 | `cleanup_files`    | bool. If True, deletes some intermediate files that are created and used within the same function. Default: True         |
 | `RAM`              | int or float. Sets the amount of RAM in GB to use when calling mapshaper.  If you get heap allocation errors, increase this value.  Keep in mind your OS and other programs still need to run, so don't try to allocate your system's full RAM amount. Default: 4         |
@@ -130,7 +140,6 @@ For reference, the setups slurry uses for the maps they have made are provided b
 Experiment and see what provides the right amount of labeling.
 
 ## Future plans
-- Support for bathymetric data (`ocean_depth_index.json` and visible within the pmtiles)
 - A module to create and manipulate demand data
 
 ## Contributions

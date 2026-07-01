@@ -204,7 +204,7 @@ class MapGen:
                                        If False, it looks like any other 
                                        ordinary tile.
                                        Default: True
-        maxzoom: int. Maximum zoom level for maps.
+        maxzoom: int. Maximum zoom level for maps. Default: 15
         ncores: int. Number of cores to use when processing tiles in parallel.
                      Setting this to None will use all available cores.
                      Default: 1

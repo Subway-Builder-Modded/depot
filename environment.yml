@@ -9,3 +9,9 @@ dependencies:
   - python=3.13.9
   - python-duckdb=1.5.1
   - shapely=2.1.2
+  - osmnx=2.1.0
+  - tqdm=4.68.2
+  - xarray=2026.4.0
+  - netcdf4=1.7.4
+  - httpx=0.28.1
+  - mercantile=1.2.1

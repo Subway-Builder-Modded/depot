@@ -1196,7 +1196,7 @@ class MapGen:
     
     def load_bathymetry_data(self, opendap_url="https://dap.ceda.ac.uk/thredds/dodsC/bodc/gebco/global/gebco_2026/sub_ice_topography_bathymetry/netcdf/GEBCO_2026_sub_ice.nc", 
                              buffer=0.05, CELL_SIZE=0.0027,
-                             depth_step=4, resolution_multiplier=4):
+                             resolution_multiplier=4):
         """
         Connects to GEBCO's bathymetry data via OPeNDAP and processes 
         it into SB's ocean_depths_index format.
@@ -1214,9 +1214,6 @@ class MapGen:
                    performance. Don't change this number unless you have a 
                    very good reason.
                    Default: 0.0027
-        depth_step: int. Step size in meters between depth layers for ingame 
-                    ocean depth map layer. Vanilla maps use 4 m.
-                    Default: 4
         resolution_multiplier: int or float. Multiplier for the resolution of 
                                the bathymetry data. Smooths the contours at 
                                the cost of increased file sizes. Use 1 for no 
@@ -1264,11 +1261,18 @@ class MapGen:
         
         if depths.min() < 0:
             # Set up depth contour levels (strictly below sea level)
-            true_min = float(depths.min())
-            interval_start = int(np.ceil(true_min / float(depth_step)) * int(depth_step))
-            clean_steps = np.arange(interval_start, 0.1, int(depth_step)) 
-            DEPTH_LEVELS = np.unique(np.insert(clean_steps, 0, true_min))
-            DEPTH_LEVELS = DEPTH_LEVELS[DEPTH_LEVELS < 0] 
+            depth_min = float(depths.min())
+            # Standard grid of depths - reverse it so it goes deepest -> shallowest
+            DEPTH_LEVELS = -1 * np.concatenate((np.arange(   0,    40,    5), 
+                                                np.arange(  40,   100,   10), 
+                                                np.arange( 100,   500,   50),
+                                                np.arange( 500,  1000,  100),
+                                                np.arange(1000, 11000, 1000)))[::-1]
+            DEPTH_LEVELS = DEPTH_LEVELS[DEPTH_LEVELS >= depth_min]
+            # Ensure the deepest point is its own level
+            DEPTH_LEVELS = np.insert(DEPTH_LEVELS, 0, depth_min)
+            if self.verb:
+                print("  Depth levels:", DEPTH_LEVELS)
             
             # Increase the resolution multiplier for smoother curves
             dense_lons = np.linspace(lons[0], lons[-1], len(lons) * resolution_multiplier)
@@ -1479,15 +1483,15 @@ class MapGen:
             if self.verb:
                 print("  Patching water gaps at -4m depth")
             
-            # Find if a -4m layer index already exists in contours_by_level
-            minus_4_idx = next((i for i, (lvl, _) in enumerate(contours_by_level) if lvl == -4), None)
+            # Find if a -5m layer index already exists in contours_by_level
+            minus_5_idx = next((i for i, (lvl, _) in enumerate(contours_by_level) if lvl == -5), None)
             
-            if minus_4_idx is not None:
-                existing_4m_geom = contours_by_level[minus_4_idx][1]
-                updated_4m_geom = unary_union([existing_4m_geom, water_gaps])
-                contours_by_level[minus_4_idx] = (-4, updated_4m_geom)
+            if minus_5_idx is not None:
+                existing_5m_geom = contours_by_level[minus_5_idx][1]
+                updated_5m_geom = unary_union([existing_5m_geom, water_gaps])
+                contours_by_level[minus_5_idx] = (-5, updated_5m_geom)
             else:
-                contours_by_level.append((-4, water_gaps))
+                contours_by_level.append((-5, water_gaps))
         
         # Process cells
         depth_entries = []
@@ -1551,7 +1555,7 @@ class MapGen:
             print(f"  Processing ocean depth indices using {ncores} {core_str}")
         
         all_cx = list(range(len(grid_x)))
-        chunk_size = int(math.ceil(len(all_cx) / ncores))
+        chunk_size = int(math.ceil(len(all_cx) / ncores / 50))
         cx_chunks = [all_cx[i:i + chunk_size] for i in range(0, len(all_cx), chunk_size)]
         
         # Calculate depth indices in parallel
@@ -1567,9 +1571,6 @@ class MapGen:
                 for chunk in cx_chunks
             }
             
-            # Wrap as_completed with tqdm to display a live progress bar
-            # This is kind of useless now that it is multi-threaded, but it's 
-            # from when the code was single-threaded so I am lazily keeping it
             with tqdm(total=len(futures), desc="Processing Grid Chunks", unit="chunk") as pbar:
                 for future in as_completed(futures):
                     try:
@@ -1578,7 +1579,7 @@ class MapGen:
                     except Exception as e:
                         print(f"\n[ERROR] Chunk failed with exception: {e}")
                     
-                    pbar.update(1)  # Advance the progress bar by 1 completed chunk
+                    pbar.update(1)
 
         # Merge isolated process outputs sequentially back into the instance payload
         depth_entries = []
@@ -1626,7 +1627,10 @@ class MapGen:
     @staticmethod
     def _process_columns_worker(cx_chunk, min_lon, step_x, step_y, grid_y_len, y_bounds, 
                                 spatial_tree, valid_water_contours, final_level_cache):
-        """ Runs in an isolated process. No access to `self` to avoid Pickling Errors. """
+        """
+        Processes water depth index in an isolated process. 
+        No access to `self` to avoid Pickling Errors.
+        """
         local_depth_entries = []
         local_cell_refs = {}
         

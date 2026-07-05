@@ -1092,19 +1092,17 @@ class MapGen:
             "-o", merged_mbtiles,
             fixed_mbtiles, self.buildings_mbtiles
         ]
+        if self.create_ocean_foundations:
+            merge_cmd.append(self.ocean_foundations_mbtiles)
         self._run_command(merge_cmd)
         
-        if self.create_building_foundations or self.create_ocean_foundations:
+        if self.create_building_foundations:
             foundations_merge_cmd = [
                 "tile-join", "--force", 
-                "-o", foundations_mbtiles
+                "-o", foundations_mbtiles,
+                self.buildings_foundations_mbtiles
             ]
-            if self.create_building_foundations:
-                foundations_merge_cmd.append(self.buildings_foundations_mbtiles)
-            if self.create_ocean_foundations:
-                foundations_merge_cmd.append(self.ocean_foundations_mbtiles)
             self._run_command(foundations_merge_cmd)
-
         
         if self.cleanup_files:
             os.remove(fixed_mbtiles)
@@ -1118,7 +1116,7 @@ class MapGen:
         self._update_mbtiles_metadata(merged_mbtiles)
         self._run_command(["pmtiles", "convert", merged_mbtiles, 
                            final_pmtiles])
-        if self.create_building_foundations or self.create_ocean_foundations:
+        if self.create_building_foundations:
             self._update_mbtiles_metadata(foundations_mbtiles)
             self._run_command(["pmtiles", "convert", foundations_mbtiles, 
                                foundations_pmtiles])
@@ -1616,7 +1614,6 @@ class MapGen:
         # Format for game and save
         all_depths = [d['d'] for d in depth_entries]
         min_d = min(all_depths) if all_depths else 0.0
-        max_d = max(all_depths) if all_depths else 0.0
 
         self.bathy_data = {
             "cs": float(CELL_SIZE),

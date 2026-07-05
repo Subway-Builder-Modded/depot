@@ -1033,8 +1033,10 @@ class MapGen:
         clean_mbtiles = f"{path_prefix}-clean.mbtiles"
         fixed_mbtiles = f"{path_prefix}-fixed.mbtiles"
         merged_mbtiles = f"{path_prefix}-merged.mbtiles"
+        foundations_mbtiles = f"{path_prefix}-foundations.mbtiles"
         self.buildings_mbtiles = os.path.join(self.city_dir, "buildings.mbtiles")
         final_pmtiles = os.path.join(self.city_dir, self.city+"-nolabels.pmtiles")
+        foundations_pmtiles = os.path.join(self.city_dir, self.city+"_foundations.pmtiles")
         
         # 1. Planetiler
         bounds_str = ",".join(map(str, self.bbox))
@@ -1090,11 +1092,19 @@ class MapGen:
             "-o", merged_mbtiles,
             fixed_mbtiles, self.buildings_mbtiles
         ]
-        if self.create_building_foundations:
-            merge_cmd.append(self.buildings_foundations_mbtiles)
-        if self.create_ocean_foundations:
-            merge_cmd.append(self.ocean_foundations_mbtiles)
         self._run_command(merge_cmd)
+        
+        if self.create_building_foundations or self.create_ocean_foundations:
+            foundations_merge_cmd = [
+                "tile-join", "--force", 
+                "-o", foundations_mbtiles
+            ]
+            if self.create_building_foundations:
+                foundations_merge_cmd.append(self.buildings_foundations_mbtiles)
+            if self.create_ocean_foundations:
+                foundations_merge_cmd.append(self.ocean_foundations_mbtiles)
+            self._run_command(foundations_merge_cmd)
+
         
         if self.cleanup_files:
             os.remove(fixed_mbtiles)
@@ -1108,9 +1118,14 @@ class MapGen:
         self._update_mbtiles_metadata(merged_mbtiles)
         self._run_command(["pmtiles", "convert", merged_mbtiles, 
                            final_pmtiles])
+        if self.create_building_foundations or self.create_ocean_foundations:
+            self._update_mbtiles_metadata(foundations_mbtiles)
+            self._run_command(["pmtiles", "convert", foundations_mbtiles, 
+                               foundations_pmtiles])
         
         if self.cleanup_files:
             os.remove(merged_mbtiles)
+            os.remove(foundations_mbtiles)
         
     def _apply_jq(self, filepath, filter_str):
         """
@@ -1263,11 +1278,11 @@ class MapGen:
             # Set up depth contour levels (strictly below sea level)
             depth_min = float(depths.min())
             # Standard grid of depths - reverse it so it goes deepest -> shallowest
-            DEPTH_LEVELS = -1 * np.concatenate((np.arange(   0,    40,    5), 
-                                                np.arange(  40,   100,   10), 
-                                                np.arange( 100,   500,   50),
-                                                np.arange( 500,  1000,  100),
-                                                np.arange(1000, 11000, 1000)))[::-1]
+            DEPTH_LEVELS = -1 * np.concatenate((np.arange(   0,    40,    5, dtype=float), 
+                                                np.arange(  40,   100,   10, dtype=float), 
+                                                np.arange( 100,   500,   50, dtype=float),
+                                                np.arange( 500,  1000,  100, dtype=float),
+                                                np.arange(1000, 11000, 1000, dtype=float)))[::-1]
             DEPTH_LEVELS = DEPTH_LEVELS[DEPTH_LEVELS > depth_min]
             DEPTH_LEVELS = np.insert(DEPTH_LEVELS, 0, depth_min)
             if self.verb:
@@ -2106,7 +2121,7 @@ class MapGen:
             val = props.get('height')
 
             # Force the key to exist and be a float
-            if val is None or val == "":
+            if val is None or val == "" or float(val) <= 0:
                 props['height'] = float(default_height)
             else:
                 try:

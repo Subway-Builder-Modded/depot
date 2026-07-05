@@ -1,0 +1,976 @@
+{
+  "$schema": "special_demand_type_definitions.schema.json",
+  "version": 5,
+  "schema_package_version": "0.2.0",
+  "types": [
+    {
+      "id": "airport",
+      "code": "AIR",
+      "label": {
+        "__default__": "Airport",
+        "ja": "空港",
+        "en": "Airport"
+      },
+      "description": {
+        "__default__": "Passenger airports serving domestic and international routes",
+        "ja": "旅客ターミナルを持つ空港施設",
+        "en": "Passenger airports serving domestic and international routes"
+      },
+      "icon": "plane",
+      "sub_types": [
+        {
+          "id": "domestic_terminal",
+          "label": {
+            "__default__": "Domestic Terminal",
+            "ja": "国内線ターミナル",
+            "en": "Domestic Terminal"
+          },
+          "metadata": {
+            "classification": "Serves national/domestic routes only"
+          }
+        },
+        {
+          "id": "international_terminal",
+          "label": {
+            "__default__": "International Terminal",
+            "ja": "国際線ターミナル",
+            "en": "International Terminal"
+          },
+          "metadata": {
+            "classification": "Serves international routes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "amusement_park",
+      "code": "AMU",
+      "label": {
+        "__default__": "Amusement Park",
+        "ja": "遊園地・テーマパーク",
+        "en": "Amusement Park"
+      },
+      "description": {
+        "__default__": "Entertainment destinations centered on rides, themed experiences, and family attractions",
+        "ja": "乗り物やアトラクションを中心とした娯楽施設",
+        "en": "Entertainment destinations centered on rides, themed experiences, and family attractions"
+      },
+      "icon": "ferris-wheel",
+      "sub_types": [
+        {
+          "id": "amusement_park",
+          "label": {
+            "__default__": "Amusement Park",
+            "en" : "Amusement Park",
+            "ja": "遊園地"
+          },
+          "metadata": {
+            "classification": "Traditional amusement parks with rides and attractions"
+          }
+        },
+        {
+          "id": "theme_park",
+          "label": {
+            "__default__": "Theme Park",
+            "en" : "Theme Park",
+            "ja": "テーマパーク"
+          },
+          "metadata": {
+            "classification": "Themed entertainment complexes, farm parks, and tourist villages"
+          }
+        }
+      ]
+    },
+    {
+      "id": "aquarium",
+      "code": "AQU",
+      "label": {
+        "__default__": "Aquarium",
+        "ja": "水族館",
+        "en": "Aquarium"
+      },
+      "description": {
+        "__default__": "Facilities dedicated to the exhibition and study of marine and freshwater life",
+        "ja": "海洋生物の展示・教育施設",
+        "en": "Facilities dedicated to the exhibition and study of marine and freshwater life"
+      },
+      "icon": "fish"
+    },
+    {
+      "id": "bathhouse",
+      "code": "BTH",
+      "label": {
+        "__default__": "Bathhouse",
+        "ja": "温浴施設",
+        "en": "Bathhouse"
+      },
+      "description": {
+        "__default__": "Communal bathing facilities including hot spring resorts, public bathhouses, and saunas",
+        "ja": "温泉・銭湯・サウナなど入浴を目的とした施設",
+        "en": "Communal bathing facilities including hot spring resorts, public bathhouses, and saunas"
+      },
+      "icon": "flame"
+    },
+    {
+      "id": "convention_center",
+      "code": "CNV",
+      "label": {
+        "__default__": "Convention Center",
+        "ja": "コンベンション施設",
+        "en": "Convention Center"
+      },
+      "description": {
+        "__default__": "Large-scale venues hosting exhibitions, trade shows, and international conferences",
+        "ja": "大規模な展示会・見本市・国際会議を開催する施設",
+        "en": "Large-scale venues hosting exhibitions, trade shows, and international conferences"
+      },
+      "icon": "presentation"
+    },
+    {
+      "id": "cultural_center",
+      "code": "CUL",
+      "label": {
+        "__default__": "Cultural Center",
+        "ja": "文化施設",
+        "en": "Cultural Center"
+      },
+      "description": {
+        "__default__": "Public venues for performing arts, community events, and civic cultural programming",
+        "ja": "音楽・演劇・地域活動のための公共文化施設",
+        "en": "Public venues for performing arts, community events, and civic cultural programming"
+      },
+      "icon": "music",
+      "sub_types": [
+        {
+          "id": "childrens_center",
+          "label": {
+            "__default__": "児童館",
+            "en": "Children's Center",
+            "ja": "児童館"
+          },
+          "metadata": {
+            "classification": "Community activity centers"
+          }
+        },
+        {
+          "id": "civic_center",
+          "label": {
+            "__default__": "Civic Center",
+            "en": "Civic Center",
+            "ja": "文化会館"
+          },
+          "metadata": {
+            "classification": "Community civic centers"
+          }
+        },
+        {
+          "id": "concert_hall",
+          "label": {
+            "__default__": "Concert Hall",
+            "en": "Concert Hall",
+            "ja": "ホール"
+          },
+          "metadata": {
+            "classification": "Venue designated for live musical performances"
+          }
+        },
+        {
+          "id": "theater",
+          "label": {
+            "__default__": "Theater",
+            "en": "Theater",
+            "ja": "劇場"
+          },
+          "metadata": {
+            "classification": "Venue designated for watching films and/or live actor performances"
+          }
+        }
+      ]
+    },
+    {
+      "id": "custom",
+      "code": "CUS",
+      "label": {
+        "__default__": "Custom",
+        "ja": "カスタム",
+        "en": "Custom"
+      },
+      "description": {
+        "__default__": "Region-specific demand points that fall outside the standard taxonomy, defined by individual mappers without requiring a schema change",
+        "ja": "標準分類に該当しない、地域固有の特殊な需要ポイント",
+        "en": "Region-specific demand points that fall outside the standard taxonomy, defined by individual mappers without requiring a schema change"
+      },
+      "icon": "plus-circle"
+    },
+    {
+      "id": "government_facility",
+      "code": "GOV",
+      "label": {
+        "__default__": "Government Facility",
+        "ja": "官公庁施設",
+        "en": "Government Facility"
+      },
+      "description": {
+        "__default__": "Administrative offices providing civic services, from municipal halls to prefectural government buildings",
+        "ja": "市区町村役場・官公庁など行政サービスを提供する施設",
+        "en": "Administrative offices providing civic services, from municipal halls to prefectural government buildings"
+      },
+      "icon": "building-2"
+    },
+    {
+      "id": "heritage_site",
+      "code": "HER",
+      "label": {
+        "__default__": "Heritage Site",
+        "ja": "歴史遺産",
+        "en": "Heritage Site"
+      },
+      "description": {
+        "__default__": "Culturally and historically significant landmarks, from registered historic buildings to UNESCO World Heritage Sites",
+        "ja": "歴史的建造物・世界遺産など文化的・歴史的に重要な場所",
+        "en": "Culturally and historically significant landmarks, from registered historic buildings to UNESCO World Heritage Sites"
+      },
+      "icon": "castle",
+      "sub_types": [
+        {
+          "id": "historic_building",
+          "label": {
+            "__default__": "Historic Building",
+            "en": "Historic Building",
+            "ja": "歴史的建造物"
+          },
+          "metadata": {
+            "classification": "Facility classified as historic landmark rather than active exhibition space"
+          }
+        },
+        {
+          "id": "world_heritage",
+          "label": {
+            "__default__": "World Heritage Site",
+            "en": "World Heritage Site",
+            "ja": "世界遺産"
+          },
+          "metadata": {
+            "classification": "UNESCO World Heritage designation"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hospital",
+      "code": "HOS",
+      "label": {
+        "__default__": "Hospital",
+        "ja": "病院",
+        "en": "Hospital"
+      },
+      "description": {
+        "__default__": "Medical institutions generating both inpatient and outpatient travel demand",
+        "ja": "入院・外来需要を持つ医療機関",
+        "en": "Medical institutions generating both inpatient and outpatient travel demand"
+      },
+      "icon": "hospital"
+    },
+    {
+      "id": "library",
+      "code": "LIB",
+      "label": {
+        "__default__": "Library",
+        "ja": "図書館",
+        "en": "Library"
+      },
+      "description": {
+        "__default__": "Public and academic libraries providing collection access, reading rooms, and community learning spaces",
+        "ja": "公共図書館・大学図書館など蔵書と閲覧サービスを提供する施設",
+        "en": "Public and academic libraries providing collection access, reading rooms, and community learning spaces"
+      },
+      "icon": "book-open"
+    },
+    {
+      "id": "military_base",
+      "code": "MIL",
+      "label": {
+        "__default__": "Military Base",
+        "ja": "軍事基地",
+        "en": "Military Base"
+      },
+      "description": {
+        "__default__": "Defense installations generating significant employment demand in locations outside normal commuting patterns",
+        "ja": "自衛隊基地・駐留軍施設など、通常の通勤圏外に大規模な雇用を生む防衛関連拠点",
+        "en": "Defense installations generating significant employment demand in locations outside normal commuting patterns"
+      },
+      "icon": "shield"
+    },
+    {
+      "id": "museum",
+      "code": "MUS",
+      "label": {
+        "__default__": "Museum",
+        "ja": "博物館・美術館",
+        "en": "Museum"
+      },
+      "description": {
+        "__default__": "Cultural institutions housing and exhibiting collections spanning art, history, science, and literature",
+        "ja": "美術・歴史・科学・文学などのコレクションを収蔵・展示する文化施設",
+        "en": "Cultural institutions housing and exhibiting collections spanning art, history, science, and literature"
+      },
+      "icon": "landmark",
+      "sub_types": [
+        {
+          "id": "archive",
+          "label": {
+            "__default__": "Archive",
+            "en": "Archive",
+            "ja": "資料館"
+          },
+          "metadata": {
+            "classification": "Facility that stores, preserves, and protects historical documents, records, and artifacts"
+          }
+        },
+        {
+          "id": "art_museum",
+          "label": {
+            "__default__": "Art Museum",
+            "en": "Art Museum",
+            "ja": "美術館"
+          },
+          "metadata": {
+            "classification": "Museum dedicated to collecting, preserving, and displaying visual arts"
+          }
+        },
+        {
+          "id": "gallery",
+          "label": {
+            "__default__": "Gallery",
+            "en": "Gallery",
+            "ja": "ギャラリー"
+          },
+          "metadata": {
+            "classification": "Facility dedicated to the exhibition and sale of works of art"
+          }
+        },
+        {
+          "id": "science_museum",
+          "label": {
+            "__default__": "Science Museum",
+            "en": "Science Museum",
+            "ja": "科学館"
+          },
+          "metadata": {
+            "classification": "A museum dedicated to making science and associated topics more accessible"
+          }
+        }
+      ]
+    },
+    {
+      "id": "natural_feature",
+      "code": "NAT",
+      "label": {
+        "__default__": "Natural Feature",
+        "ja": "自然景勝地",
+        "en": "Natural Feature"
+      },
+      "description": {
+        "__default__": "Scenic natural landforms that draw visitors, from mountain peaks and lakes to gorges, waterfalls, and caves",
+        "ja": "山岳・湖沼・渓谷・滝・洞窟など観光客を集める自然の地形",
+        "en": "Scenic natural landforms that draw visitors, from mountain peaks and lakes to gorges, waterfalls, and caves"
+      },
+      "icon": "mountain",
+      "sub_types": [
+        {
+          "id": "beach",
+          "label": {
+            "__default__": "beach",
+            "en": "beach"
+          },
+          "metadata": {
+            "classification": "Custom attraction code 'natural_feature'; beaches that are not linked to any resort or park"
+          }
+        },
+        {
+          "id": "cave",
+          "label": {
+            "__default__": "Cave",
+            "en": "Cave",
+            "ja": "洞窟"
+          },
+          "metadata": {
+            "classification": "Underground hollows/cavities/passages large enough for humans to enter"
+          }
+        },
+        {
+          "id": "gorge",
+          "label": {
+            "__default__": "Gorge",
+            "en": "Gorge",
+            "ja": "渓谷"
+          },
+          "metadata": {
+            "classification": "Steep-walled, narrow canyons/ravines"
+          }
+        },
+        {
+          "id": "lake",
+          "label": {
+            "__default__": "Lake",
+            "en": "Lake",
+            "ja": "湖沼"
+          },
+          "metadata": {
+            "classification": "A body of water that is surrounded by land"
+          }
+        },
+        {
+          "id": "mountain",
+          "label": {
+            "__default__": "Mountain",
+            "en": "Mountain",
+            "ja": "山岳"
+          },
+          "metadata": {
+            "classification": "Large, steep landforms that rise significantly above its surrounding terrain"
+          }
+        },
+        {
+          "id": "scenic_spot",
+          "label": {
+            "__default__": "Scenic Spot",
+            "en": "Scenic Spot",
+            "ja": "景勝地"
+          },
+          "metadata": {
+            "classification": "Catch-all for scenic locations that don't fit a specific landform"
+          }
+        },
+        {
+          "id": "waterfall",
+          "label": {
+            "__default__": "Waterfall",
+            "en": "Waterfall",
+            "ja": "滝"
+          },
+          "metadata": {
+            "classification": "Geographical features where a river flows over a vertical drop"
+          }
+        }
+      ]
+    },
+    {
+      "id": "outside_connection",
+      "code": "EXT",
+      "label": {
+        "__default__": "Outside Connection",
+        "ja": "域外接続",
+        "en": "Outside Connection"
+      },
+      "description": {
+        "__default__": "Virtual demand nodes representing travel originating from or destined to locations beyond the map boundary",
+        "ja": "マップ境界外からの需要を表す仮想接続点",
+        "en": "Virtual demand nodes representing travel originating from or destined to locations beyond the map boundary"
+      },
+      "icon": "arrow-right-from-line"
+    },
+    {
+      "id": "park",
+      "code": "PRK",
+      "label": {
+        "__default__": "Park",
+        "ja": "公園",
+        "en": "Park"
+      },
+      "description": {
+        "__default__": "Green recreational spaces including urban parks, curated gardens, nature reserves, and botanical gardens",
+        "ja": "都市公園・庭園・自然公園・植物園など緑地レクリエーション空間",
+        "en": "Green recreational spaces including urban parks, curated gardens, nature reserves, and botanical gardens"
+      },
+      "icon": "trees",
+      "sub_types": [
+        {
+          "id": "botanical_garden",
+          "label": {
+            "__default__": "Botanical Garden",
+            "en": "Botanical Garden",
+            "ja": "植物園"
+          },
+          "metadata": {
+            "classification": "Institutions that maintain curated, labeled collections of plants"
+          }
+        },
+        {
+          "id": "garden",
+          "label": {
+            "__default__": "Garden",
+            "en": "Garden",
+            "ja": "庭園"
+          },
+          "metadata": {
+            "classification": "Cultivated spaces for plants"
+          }
+        },
+        {
+          "id": "nature_park",
+          "label": {
+            "__default__": "Nature Park",
+            "en": "Nature Park",
+            "ja": "自然公園"
+          },
+          "metadata": {
+            "classification": "Protected lands designated to preserve local ecosystems"
+          }
+        },
+        {
+          "id": "park",
+          "label": {
+            "__default__": "Park",
+            "en": "Park",
+            "ja": "公園"
+          },
+          "metadata": {
+            "classification": "General urban or rural parks without a specialized designation"
+          }
+        }
+      ]
+    },
+    {
+      "id": "port",
+      "code": "PORT",
+      "label": {
+        "__default__": "Port",
+        "ja": "港湾",
+        "en": "Port"
+      },
+      "description": {
+        "__default__": "Passenger ferry and high-speed boat terminals",
+        "ja": "旅客フェリー・高速船の発着港湾施設",
+        "en": "Passenger ferry and high-speed boat terminals"
+      },
+      "icon": "ship",
+      "metadata": {
+        "source": "mlit_port_csv"
+      }
+    },
+    {
+      "id": "religious_institution",
+      "code": "REL",
+      "label": {
+        "__default__": "Religious Institution",
+        "ja": "宗教施設",
+        "en": "Religious Institution"
+      },
+      "description": {
+        "__default__": "Places of worship drawing visitors for prayer, pilgrimage, and cultural tourism",
+        "ja": "神社・寺院・教会など参拝・礼拝を目的とした宗教施設",
+        "en": "Places of worship drawing visitors for prayer, pilgrimage, and cultural tourism"
+      },
+      "icon": "torii-gate",
+      "sub_types": [
+        {
+          "id": "shrine",
+          "label": {
+            "__default__": "Shrine",
+            "en": "Shrine",
+            "ja": "神社"
+          },
+          "metadata": {
+            "classification": "A religious site dedicated to a deity, saint, ancestor, or other revered figure"
+          }
+        },
+        {
+          "id": "temple",
+          "label": {
+            "__default__": "Temple",
+            "en": "Temple",
+            "ja": "寺院"
+          },
+          "metadata": {
+            "classification": "Buildings dedicated to religious worship"
+          }
+        }
+      ]
+    },
+    {
+      "id": "resort",
+      "code": "RST",
+      "label": {
+        "__default__": "Resort",
+        "ja": "リゾート",
+        "en": "Resort"
+      },
+      "description": {
+        "__default__": "Seasonal destination facilities where visitors stay for extended leisure, from ski fields to beach resorts",
+        "ja": "スキー場・ビーチリゾートなど、季節性の強い滞在型観光施設",
+        "en": "Seasonal destination facilities where visitors stay for extended leisure, from ski fields to beach resorts"
+      },
+      "icon": "snowflake"
+    },
+    {
+      "id": "school",
+      "code": "SCH",
+      "label": {
+        "__default__": "School",
+        "ja": "学校",
+        "en": "School"
+      },
+      "description": {
+        "__default__": "Primary and secondary education institutions generating daily student commute demand",
+        "ja": "小中高等学校および特別支援学校（通学需要を生む教育施設）",
+        "en": "Primary and secondary education institutions generating daily student commute demand"
+      },
+      "icon": "school",
+      "sub_types": [
+        {
+          "id": "consolidated",
+          "label": {
+            "__default__": "Consolidated School",
+            "ja": "併設校",
+            "en": "Consolidated School"
+          },
+          "metadata": {
+            "classification": "Phase F consolidation; co-located schools (e.g. adjacent elementary + junior high) merged into a single demand point with a pipe-delimited name. Identified by SCH_COM prefix or '|' in the phase_f point name"
+          }
+        },
+        {
+          "id": "elementary",
+          "label": {
+            "__default__": "Elementary School",
+            "ja": "小学校",
+            "en": "Elementary School"
+          },
+          "metadata": {
+            "classification": "Schools that cover primary education"
+          }
+        },
+        {
+          "id": "high_school",
+          "label": {
+            "__default__": "High School",
+            "ja": "高等学校",
+            "en": "High School"
+          },
+          "metadata": {
+            "classification": "Schools that cover secondary education"
+          }
+        },
+        {
+          "id": "junior_high",
+          "label": {
+            "__default__": "Junior High School",
+            "ja": "中学校",
+            "en": "Junior High School"
+          },
+          "metadata": {
+            "classification": "Schools that bridge the gap between elementary and high school"
+          }
+        },
+        {
+          "id": "middle_school",
+          "label": {
+            "__default__": "Middle School",
+            "en": "Middle School"
+          },
+          "metadata": {
+            "classification": "Schools that bridge the gap between elementary and high school"
+          }
+        },
+        {
+          "id": "special_support",
+          "label": {
+            "__default__": "Special Support School",
+            "ja": "特別支援学校",
+            "en": "Special Support School"
+          },
+          "metadata": {
+            "classification": "Schools for students with disabilities"
+          }
+        }
+      ]
+    },
+    {
+      "id": "shopping_center",
+      "code": "SHP",
+      "label": {
+        "__default__": "Shopping Center",
+        "ja": "商業施設",
+        "en": "Shopping Center"
+      },
+      "description": {
+        "__default__": "Large-scale retail destinations drawing weekend and evening visitors from a wide catchment area",
+        "ja": "大型ショッピングモール・百貨店・アウトレットなど広域集客型の商業施設",
+        "en": "Large-scale retail destinations drawing weekend and evening visitors from a wide catchment area"
+      },
+      "icon": "shopping-bag"
+    },
+    {
+      "id": "sports_facility",
+      "code": "SPO",
+      "label": {
+        "__default__": "Sports Facility",
+        "ja": "スポーツ施設",
+        "en": "Sports Facility"
+      },
+      "description": {
+        "__default__": "Venues for competitive and recreational sport, from municipal gyms and pools to professional stadiums and racetracks",
+        "ja": "体育館・スタジアム・競技場・運動公園など、競技とレクリエーションのための施設",
+        "en": "Venues for competitive and recreational sport, from municipal gyms and pools to professional stadiums and racetracks"
+      },
+      "icon": "dumbbell",
+      "sub_types": [
+        {
+          "id": "arena",
+          "label": {
+            "__default__": "Arena",
+            "en": "Arena",
+            "ja": "アリーナ"
+          },
+          "metadata": {
+            "classification": "Enclosed multi-purpose venue"
+          }
+        },
+        {
+          "id": "athletic_field",
+          "label": {
+            "__default__": "Athletic Field",
+            "en": "Athletic Field",
+            "ja": "運動場"
+          },
+          "metadata": {
+            "classification": "Open-air general-purpose field"
+          }
+        },
+        {
+          "id": "athletics_track",
+          "label": {
+            "__default__": "Athletics Track",
+            "en": "Athletics Track",
+            "ja": "陸上競技場"
+          },
+          "metadata": {
+            "classification": "Dedicated track-and-field facility"
+          }
+        },
+        {
+          "id": "baseball_field",
+          "label": {
+            "__default__": "Baseball Field",
+            "en": "Baseball Field",
+            "ja": "野球場"
+          },
+          "metadata": {
+            "classification": "Venues to play baseball"
+          }
+        },
+        {
+          "id": "gymnasium",
+          "label": {
+            "__default__": "Gymnasium",
+            "en": "Gymnasium",
+            "ja": "体育館"
+          },
+          "metadata": {
+            "classification": "Indoor gym"
+          }
+        },
+        {
+          "id": "ice_rink",
+          "label": {
+            "__default__": "Ice Rink",
+            "en": "Ice Rink",
+            "ja": "アイスリンク"
+          },
+          "metadata": {
+            "classification": "Facilities for ice skating"
+          }
+        },
+        {
+          "id": "martial_arts_hall",
+          "label": {
+            "__default__": "Martial Arts Hall",
+            "en": "Martial Arts Hall",
+            "ja": "武道館"
+          },
+          "metadata": {
+            "classification": "Facilities for practicing martial arts"
+          }
+        },
+        {
+          "id": "pool",
+          "label": {
+            "__default__": "Pool",
+            "en": "Pool",
+            "ja": "プール"
+          },
+          "metadata": {
+            "classification": "Public swimming facilities"
+          }
+        },
+        {
+          "id": "racetrack",
+          "label": {
+            "__default__": "Racetrack",
+            "en": "Racetrack",
+            "ja": "競走場"
+          },
+          "metadata": {
+            "classification": "Facilities for racing vehicles or animals"
+          }
+        },
+        {
+          "id": "sports_complex",
+          "label": {
+            "__default__": "Sports Complex",
+            "en": "Sports Complex",
+            "ja": "総合運動公園"
+          },
+          "metadata": {
+            "classification": "Large multi-venue complexes with multiple sports facilities"
+          }
+        },
+        {
+          "id": "sports_park",
+          "label": {
+            "__default__": "Sports Park",
+            "en": "Sports Park",
+            "ja": "運動公園"
+          },
+          "metadata": {
+            "classification": "Parks primarily intended for sport and recreation"
+          }
+        },
+        {
+          "id": "stadium",
+          "label": {
+            "__default__": "Stadium",
+            "en": "Stadium",
+            "ja": "スタジアム"
+          },
+          "metadata": {
+            "classification": "Professional-grade stadiums and major arenas"
+          }
+        },
+        {
+          "id": "tennis_court",
+          "label": {
+            "__default__": "Tennis Court",
+            "en": "Tennis Court",
+            "ja": "テニスコート"
+          },
+          "metadata": {
+            "classification": "Facilities dedicated to playing tennis"
+          }
+        }
+      ]
+    },
+    {
+      "id": "university",
+      "code": "UNI",
+      "label": {
+        "__default__": "University",
+        "ja": "大学・高専",
+        "en": "University"
+      },
+      "description": {
+        "__default__": "Higher education institutions drawing students from a wide catchment area",
+        "ja": "大学・短期大学・高等専門学校（広域から学生が通う高等教育機関）",
+        "en": "Higher education institutions drawing students from a wide catchment area"
+      },
+      "icon": "graduation-cap",
+      "sub_types": [
+        {
+          "id": "community_college",
+          "label": {
+            "__default__": "Community College",
+            "en": "Community College"
+          },
+          "metadata": {
+            "classification": "Two-year post-secondary colleges"
+          }
+        },
+        {
+          "id": "junior_college",
+          "label": {
+            "__default__": "Junior College",
+            "ja": "短期大学",
+            "en": "Junior College"
+          },
+          "metadata": {
+            "classification": "Two-year post-secondary colleges"
+          }
+        },
+        {
+          "id": "technical_college",
+          "label": {
+            "__default__": "Technical College",
+            "ja": "高等専門学校",
+            "en": "Technical College"
+          },
+          "metadata": {
+            "classification": "Trade and vocational schools"
+          }
+        },
+        {
+          "id": "university",
+          "label": {
+            "__default__": "University",
+            "ja": "大学",
+            "en": "University"
+          },
+          "metadata": {
+            "classification": "Post-secondary educational institutions that offer undergraduate and graduate degrees"
+          }
+        }
+      ]
+    },
+    {
+      "id": "events",
+      "code": "EVT",
+      "label": {
+        "__default__": "Events",
+        "en": "Events"
+      },
+      "description": {
+        "__default__": "Temporary or recurring events that create concentrated travel demand.",
+        "en": "Temporary or recurring events that create concentrated travel demand."
+      },
+      "icon": "calendar-days"
+    },
+    {
+      "id": "zoo",
+      "code": "ZOO",
+      "label": {
+        "__default__": "Zoo",
+        "ja": "動物園",
+        "en": "Zoo"
+      },
+      "description": {
+        "__default__": "Facilities for the exhibition and conservation of terrestrial and safari wildlife",
+        "ja": "動物の飼育展示・保全教育を行う施設",
+        "en": "Facilities for the exhibition and conservation of terrestrial and safari wildlife"
+      },
+      "icon": "rabbit",
+      "sub_types": [
+        {
+          "id": "safari_park",
+          "label": {
+            "__default__": "Safari Park",
+            "en": "Safari Park",
+            "ja": "サファリパーク"
+          },
+          "metadata": {
+            "classification": "Facilities where animals roam freely in large, open-air enclosures"
+          }
+        },
+        {
+          "id": "zoo",
+          "label": {
+            "__default__": "Zoo",
+            "en": "Zoo",
+            "ja": "動物園"
+          },
+          "metadata": {
+            "classification": "Facilities where animals are kept in enclosures for public exhibition"
+          }
+        }
+      ]
+    }
+  ]
+}

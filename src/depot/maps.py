@@ -99,7 +99,7 @@ class MapGen:
                        building_tile_filter_size=None, 
                        building_index_simplification=1,
                        building_tile_simplification=1,
-                       max_building_tile_size=450,
+                       max_building_tile_size=None,
                        cities=None, suburbs=None, neighborhoods=None,
                        cities_additional=None, suburbs_additional=None, 
                        neighborhoods_additional=None, 
@@ -110,7 +110,7 @@ class MapGen:
                        reprocess_bathymetry_data=False, 
                        color_military_like_aerodrome=True,
                        maxzoom=15, 
-                       ncores=1, RAM=4, cleanup_files=True, verb=True):
+                       ncores=1, RAM=4, cleanup_files=True, verb=True, debug=False):
         """
         Inputs
         ------
@@ -145,11 +145,13 @@ class MapGen:
         building_tile_simplification: int or float. Like 
                                 `building_index_simplification`, but for the 
                                 buildings in the pmtiles file.
-        max_building_tile_size: int. Maximum size per tile in KB when 
-                                considering only buildings. The absolute 
-                                maximum per tile is 500, which includes 
-                                buildings, rivers, roads, and more.
-                                Default: 450
+        max_building_tile_size: int or None. Maximum size per tile in KB when 
+                                considering only buildings. 
+                                Normally pmtiles are capped at 500 kb per tile 
+                                for performance reasons; users may wish to 
+                                adopt the same for their maps.
+                                If None, no limit is enforced. 
+                                Default: None
         cities: list of str. OSM 'place' values to show at the lowest zooms.
                              If None, labels will not be created for that zoom.
         suburbs: list of str. Like cities, but for medium zooms.
@@ -222,8 +224,12 @@ class MapGen:
                              Default: True
         verb: bool. Determines whether to print additional info or not.
                     Default: True
+        debug: bool. Determines whether to output some additional details to 
+                     the pmtiles file that are not needed but can be helpful.
+                     Default: False
         """
         self.verb = bool(verb)
+        self.debug = bool(debug)
         # Ensure the environment is set up correctly
         self._validate_env()
         
@@ -270,11 +276,13 @@ class MapGen:
         self.building_tile_simplification  = building_tile_simplification
 
         # Maximum size per tile for buildings
-        if max_building_tile_size > 500 or max_building_tile_size < 100:
-            raise ValueError("`max_building_tile_size` must be >=100 and "
-                            f"<=500.\nReceived: {max_building_tile_size}")
-        self.max_building_tile_size = int(max_building_tile_size) * 1000
-                           
+        self.max_building_tile_size = max_building_tile_size
+        if self.max_building_tile_size is not None:
+            if self.max_building_tile_size < 100:
+                raise ValueError("`max_building_tile_size` should be >=100"
+                                f"\nReceived: {self.max_building_tile_size}")
+            self.max_building_tile_size = int(max_building_tile_size) * 1000
+        
         # Labels
         self.cities = cities
         self.suburbs = suburbs
@@ -301,14 +309,15 @@ class MapGen:
             print("------------------------------")
             print(f"city                : {self.city}")
             print(f"bbox                : {self.bbox}")
-            print(f"osmpbf source files : {self.osmpbf_sources}")
             print(f"redownload_buildings: {self.REFETCH_BUILDINGS}")
+            print(f"osmpbf source files : {self.osmpbf_sources}")
             print(f"create_building_foundations  : {self.create_building_foundations}")
             print(f"create_ocean_foundations     : {self.create_ocean_foundations}")
             print(f"reprocess_bathymetry_data    : {self.reprocess_bathymetry_data}")
             print(f"color_military_like_aerodrome: {self.color_military_like_aerodrome}")
             print(f"building_index_filter_size   : {self.building_index_filter_size} m2")
             print(f"building_tile_filter_size    : {self.building_tile_filter_size} m2")
+            print(f"max_building_tile_size       : {self.max_building_tile_size}")
             print(f"maxzoom      : {self.maxzoom}")
             print(f"ncores       : {self.ncores}")
             print(f"RAM          : {self.RAM} MB")
@@ -575,6 +584,9 @@ class MapGen:
             try:
                 # Parse geometry via Shapely
                 geom_shape = shape(geom)
+                
+                if geom_shape.is_empty:
+                    continue
 
                 # Handle MultiPolygons
                 if isinstance(geom_shape, MultiPolygon):
@@ -1080,8 +1092,6 @@ class MapGen:
         # 4. Building overlays, including foundations
         self._generate_building_tiles()
         
-
-
         # Clean metadata
         self._update_mbtiles_metadata(fixed_mbtiles)
         self._update_mbtiles_metadata(self.buildings_mbtiles)
@@ -1094,21 +1104,12 @@ class MapGen:
         ]
         if self.create_ocean_foundations:
             merge_cmd.append(self.ocean_foundations_mbtiles)
+        merge_cmd.append("--no-tile-size-limit")
         self._run_command(merge_cmd)
-        
-        if self.create_building_foundations:
-            foundations_merge_cmd = [
-                "tile-join", "--force", 
-                "-o", foundations_mbtiles,
-                self.buildings_foundations_mbtiles
-            ]
-            self._run_command(foundations_merge_cmd)
         
         if self.cleanup_files:
             os.remove(fixed_mbtiles)
             os.remove(self.buildings_mbtiles)
-            if self.create_building_foundations:
-                os.remove(self.buildings_foundations_mbtiles)
             if self.create_ocean_foundations:
                 os.remove(self.ocean_foundations_mbtiles)
         
@@ -1117,13 +1118,16 @@ class MapGen:
         self._run_command(["pmtiles", "convert", merged_mbtiles, 
                            final_pmtiles])
         if self.create_building_foundations:
-            self._update_mbtiles_metadata(foundations_mbtiles)
-            self._run_command(["pmtiles", "convert", foundations_mbtiles, 
+            self._update_mbtiles_metadata(self.buildings_foundations_mbtiles)
+            self._run_command(["pmtiles", "convert", 
+                               self.buildings_foundations_mbtiles, 
                                foundations_pmtiles])
         
         if self.cleanup_files:
             os.remove(merged_mbtiles)
-            os.remove(foundations_mbtiles)
+            #os.remove(foundations_mbtiles)
+            if self.create_building_foundations:
+                os.remove(self.buildings_foundations_mbtiles)
         
     def _apply_jq(self, filepath, filter_str):
         """
@@ -1722,6 +1726,7 @@ class MapGen:
         tippe_cmd = [
             "tippecanoe", "-o", self.ocean_foundations_mbtiles,
             "--layer=ocean_foundations", "--include=depth_min", "--include=kind", 
+            "--no-tile-size-limit", 
             "-Z8", f"-z{self.maxzoom}", self.ocean_foundations_geojson, "--force"
         ]
         self._run_command(tippe_cmd)
@@ -1820,20 +1825,34 @@ class MapGen:
                 elif (kind == 'aeroway' or \
                       'runway' in str(old_props).lower() or \
                       'taxiway' in str(old_props).lower()):
-                    dest, final_kind, final_rank = "roads", "aeroway", 400
-                    if not detail:
-                        detail = (
-                            'runway' if 'runway' in str(old_props).lower() 
-                            else 'taxiway'
-                        )
+                    if self.debug:
+                        dest, final_kind, final_rank = "roads", "aeroway", 400
+                        if not detail:
+                            detail = (
+                                'runway' if 'runway' in str(old_props).lower() 
+                                else 'taxiway'
+                            )
+                    else:
+                        # Map layer not needed - runways_taxiways.geojson handles this
+                        continue
                 elif kind == 'aerodrome':
                     dest, final_kind, final_rank = "landuse", "aerodrome", 189
                 elif is_bldg_layer or kind == 'building':
                     dest, final_kind, final_rank = "buildings", "building", 400
                 elif layer_name in ["transportation", "roads", "navigation"]:
-                    dest, final_kind, final_rank = "roads", kind, rank
-                else:
+                    if self.debug:
+                        dest, final_kind, final_rank = "roads", kind, rank
+                    else:
+                        # Map layer not needed - roads.geojson handles this
+                        continue
+                elif kind in ['college', 'commercial', 'industrial', 
+                              'residential', 'retail', 'school', 'university']:
+                    dest, final_kind, final_rank = kind, kind, rank
+                elif kind == 'park':
                     dest, final_kind, final_rank = "landuse", kind, rank
+                else:
+                    # Not keeping this feature - drop it
+                    continue
 
                 props = {'kind': final_kind, 'sort_rank': final_rank}
                 if detail: props['kind_detail'] = detail
@@ -1976,7 +1995,7 @@ class MapGen:
                 feat["geometry"] = mapping(geom)
                 kept.append(feat)
             new_layers_data["landuse"] = kept
-
+        
         layers_to_encode = []
         for name, feats in new_layers_data.items():
             if not feats: continue
@@ -1986,9 +2005,6 @@ class MapGen:
                                      "extent": 4096, 
                                      "version": 2})
 
-        if not layers_to_encode:
-            return (z, x, y, data)
-        
         return (
             z, x, y, zlib.compress(mapbox_vector_tile.encode(layers_to_encode))
         )
@@ -2018,8 +2034,7 @@ class MapGen:
                   f"cores...")
         
         with ProcessPoolExecutor(max_workers=self.ncores) as executor:
-            results = list(executor.map(self._process_tile_worker, 
-                                        all_tiles))
+            results = list(executor.map(self._process_tile_worker, all_tiles))
 
         # Setup output database
         out_conn = sqlite3.connect(output_path)
@@ -2089,11 +2104,15 @@ class MapGen:
         self._set_default_building_height()
         
         # Convert to Vector Tiles with Tippecanoe
+        if self.max_building_tile_size is not None:
+            building_tile_params = ["--drop-smallest-as-needed",
+                f"--maximum-tile-bytes={self.max_building_tile_size}"]
+        else:
+            building_tile_params = ["--no-tile-size-limit"]
         tippe_cmd = [
             "tippecanoe", "-o", self.buildings_mbtiles,
-            "--layer=buildings", "--include=height", "--drop-smallest-as-needed",
-            f"--maximum-tile-bytes={self.max_building_tile_size}", 
-            "-Z12", f"-z{self.maxzoom}", self.buildings_zoom_geojson, "--force"
+            "--layer=buildings", "--include=height"] + building_tile_params + \
+           ["-Z12", f"-z{self.maxzoom}", self.buildings_zoom_geojson, "--force"
         ]
         self._run_command(tippe_cmd)
         
@@ -2166,11 +2185,15 @@ class MapGen:
         with open(self.buildings_foundations_geojson, 'w', encoding='utf-8') as f:
             json.dump(geojson_data, f, indent=2)
         
+        if self.max_building_tile_size is not None:
+            building_tile_params = ["--drop-smallest-as-needed",
+                f"--maximum-tile-bytes={self.max_building_tile_size}"]
+        else:
+            building_tile_params = ["--no-tile-size-limit"]
         tippe_cmd = [
             "tippecanoe", "-o", self.buildings_foundations_mbtiles,
-            "--layer=foundations", "--include=foundationDepth", "--drop-smallest-as-needed",
-            f"--maximum-tile-bytes={self.max_building_tile_size}", 
-            "-Z12", f"-z{self.maxzoom}", self.buildings_foundations_geojson, "--force"
+            "--layer=foundations", "--include=foundationDepth"] + building_tile_params +\
+           ["-Z12", f"-z{self.maxzoom}", self.buildings_foundations_geojson, "--force"
         ]
         self._run_command(tippe_cmd)
         
@@ -2365,7 +2388,7 @@ class MapGen:
         bbox_clean = ",".join(map(str, self.bbox))
         tippe_cmd = [
             "tippecanoe", "-Z", "6", "-z", f"{self.maxzoom}", "-r", "1", "-y", "name",
-            "-o", labels_only_pmtiles,
+            "-o", labels_only_pmtiles, "--no-tile-size-limit",
             f"--clip-bounding-box={bbox_clean}",
             "--force"
         ]
@@ -2386,7 +2409,7 @@ class MapGen:
         self._run_command(["tile-join", "-o", 
                            final_mbtiles, 
                            no_labels_pmtiles, labels_only_pmtiles,
-                           '--force'])
+                           "--no-tile-size-limit", "--force"])
         self._update_mbtiles_metadata(final_mbtiles)
         self._run_command(["pmtiles", "convert", final_mbtiles, 
                            final_output])

@@ -1740,8 +1740,7 @@ class MapGen:
         ranks.
         """
         priority = {
-            'aeroway': 400, 'river': 200, 'park': 189, 'wood': 180,
-            'forest': 180, 'scrub': 180, 'grass': 50, 'aerodrome': 189
+            'aeroway': 400, 'river': 200, 'park': 189, 'aerodrome': 189
         }
         if not isinstance(val, str): return 'other', None, 0
         v = val.lower()
@@ -1752,13 +1751,15 @@ class MapGen:
         if 'river' in v:
             return 'river', None, priority['river']
         if any(x in v for x in ['park', 'nature_reserve', 'cemetery', 'pitch', 
-                                'zoo', 'grass', 'wood']):
+                                'zoo', 'grass', 'wood', 'forest', 'scrub', 
+                                'wetland', 'wilderness_area', 
+                                'wildlife_sanctuary', 'state_forest', 
+                                'national_wildlife_refuge', 'management_area', 
+                                'wildlife_management_area']):
             return 'park', None, priority['park']
         if 'aerodrome' in v or \
            ('military' in v and self.color_military_like_aerodrome):
             return 'aerodrome', None, priority['aerodrome']
-        if 'scrub' in v:
-            return 'scrub', None, priority['scrub']
         return v, None, 0
 
     def _process_tile_worker(self, tile_tuple):
@@ -1845,14 +1846,18 @@ class MapGen:
                     else:
                         # Map layer not needed - roads.geojson handles this
                         continue
-                elif kind in ['college', 'commercial', 'industrial', 
+                elif kind in ['college', 'commercial', 'hospital', 'industrial', 
                               'residential', 'retail', 'school', 'university']:
                     dest, final_kind, final_rank = kind, kind, rank
                 elif kind == 'park':
                     dest, final_kind, final_rank = "landuse", kind, rank
                 else:
-                    # Not keeping this feature - drop it
-                    continue
+                    if self.debug:
+                        # Store it in a debug layer for easier consideration
+                        dest, final_kind, final_rank = "debug", kind, rank
+                    else:
+                        # Not keeping this feature - drop it
+                        continue
 
                 props = {'kind': final_kind, 'sort_rank': final_rank}
                 if detail: props['kind_detail'] = detail
@@ -1865,6 +1870,71 @@ class MapGen:
                     "id": feature.get('id'), 
                     "type": feature.get('type')
                 })
+        
+        # Handle overlapping park features
+        if "landuse" in new_layers_data:
+            park_geoms = []
+            kept_landuse_feats = []
+            
+            # We will save the first park's properties to act as a template for the dissolved geometries.
+            # (Note: Unique IDs or specific 'ref' tags will be lost during this merge).
+            base_park_properties = {"kind": "park", "sort_rank": 189} 
+
+            for feat in new_layers_data["landuse"]:
+                if feat["properties"].get("kind") == "park":
+                    geom = shape(feat["geometry"])
+                    if not geom.is_empty:
+                        if not geom.is_valid:
+                            geom = geom.buffer(0)
+                        park_geoms.append(geom)
+                    
+                    # Grab a copy of the properties to re-apply later
+                    base_park_properties = feat["properties"]
+                else:
+                    kept_landuse_feats.append(feat)
+
+            if park_geoms:
+                # Union all park geometries to dissolve overlapping interior boundaries
+                # Slight buffer to remove tiny slivers in the middle of polygons
+                swelled_parks = [g.buffer(4) for g in park_geoms]
+                merged_parks = unary_union(swelled_parks)
+                merged_parks = merged_parks.buffer(-4)
+                #merged_parks = unary_union(park_geoms)
+                
+                # Fix potential self-intersections after the union
+                merged_parks = shapely.make_valid(merged_parks)
+                
+                # Explode the result into individual Polygon features
+                final_park_parts = []
+                if isinstance(merged_parks, Polygon):
+                    final_park_parts.append(merged_parks)
+                elif isinstance(merged_parks, MultiPolygon):
+                    final_park_parts.extend(list(merged_parks.geoms))
+                elif hasattr(merged_parks, 'geoms'):
+                    # Fallback for GeometryCollections
+                    for g in merged_parks.geoms:
+                        if isinstance(g, Polygon):
+                            final_park_parts.append(g)
+                        elif isinstance(g, MultiPolygon):
+                            final_park_parts.extend(list(g.geoms))
+
+                # Reconstruct the features
+                for part in final_park_parts:
+                    if part.is_empty or part.area < 0.01:
+                        continue
+                    
+                    # Ensure exterior ring is CCW
+                    part = orient(part, sign=1.0)
+                    
+                    kept_landuse_feats.append({
+                        "geometry": mapping(part),
+                        "properties": base_park_properties,
+                        "type": "Polygon"
+                        # Drop "id"
+                    })
+            
+            # Replace the layer data with the clean subset
+            new_layers_data["landuse"] = kept_landuse_feats
         
         # Handle water features
         if water_geoms_to_dissolve:

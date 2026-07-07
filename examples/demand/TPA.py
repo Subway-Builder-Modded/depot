@@ -205,3 +205,7 @@ tpa.calculate_routes(config['ROUTING_METHOD'], config['bbox'])
 tpa.print_stats()
 
 tpa.save('TPA/updated_demand_data.json')
+
+tpa.create_config(name="Tampa Bay", bbox=config['bbox'],
+                  description="Bring rapid transit to the Big Guava.", 
+                  creator="slurry", version="1.3.0", country="US")

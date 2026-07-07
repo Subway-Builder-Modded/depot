@@ -38,6 +38,7 @@ import osmnx as ox
 from shapely.geometry import Point, Polygon
 from shapely.prepared import prep
 from sklearn.cluster import AgglomerativeClustering
+from unidecode import unidecode
 
 import depot.utils as U
 
@@ -78,8 +79,11 @@ class DemandData(dict):
     _load_schema: Helper method to read data into structures.
     get_exponent: Looks up the decay exponent for a given point of interest 
                   type ID.
+    save_schemas: Save out special demand types and points schema files.
+    create_config: Creates the config.json file needed for Railyard import.
     """
-    def __init__(self, fdemand, map_code, outputdir=None, HUMAN_READABLE=False, verb=True):
+    def __init__(self, fdemand, map_code, bbox=None,
+                 outputdir=None, HUMAN_READABLE=False, verb=True):
         """
         Inputs
         ------
@@ -106,6 +110,7 @@ class DemandData(dict):
         self.verb = bool(verb)
         
         self.map_code = map_code
+        self.bbox = bbox
         self.outputdir = outputdir
         if self.outputdir is None:
             self.outputdir = self.map_code
@@ -159,6 +164,9 @@ class DemandData(dict):
                   "specified in the object's fdemand attribute or the "
                   "function's fdemand input.")
         
+        # Ensure consistent points data
+        self.update(self.sanitize(self))
+        
         # Convert self to a standard dict to ensure clean JSON serialization
         with open(fdemand, "w") as json_file:
             if self.HUMAN_READABLE:
@@ -192,19 +200,45 @@ class DemandData(dict):
         with open(fdemand, "r", encoding="utf-8") as f:
             data = json.load(f)
         
-        # Update the dictionary keys safely
-        if isinstance(data, dict):
-            if "pops" not in data.keys() or not len(data["pops"]):
-                raise ValueError(f"File '{fdemand}' does not have any defined pops.")
-            else:
-                self["pops"] = data["pops"]
-            if "points" not in data.keys() or not len(data["points"]):
-                raise ValueError(f"File '{fdemand}' does not have any defined points.")
-            else:
-                self["points"] = data["points"]
-        else:
-            raise ValueError("The JSON file must contain a top-level dictionary" 
-                             "with keys for 'pops' and 'points'.")
+        # Sanitize the input data
+        self.update(self.sanitize(data))
+    
+    @staticmethod
+    def sanitize(data):
+        """
+        Sanitizes demand data by
+        - recalculating points' job and resident counts from the pops list,
+        - dropping any points and pops of size 0, and
+        - dropping any pops that aren't assigned to a point.
+        """
+        assert isinstance(data, dict), "`data` input must be a dictionary."\
+                                      f"\nReceived: {type(data)}"
+        assert 'pops' in data.keys() and 'points' in data.keys(), "`data` "\
+                        f"input dict must have keys for 'pops' and 'points'."\
+                        f"\nReceived: {data.keys()}"
+        # Clear out empty pops and pops that don't have a residence and/or job
+        points_by_id = {p['id']: p for p in data['points']}
+        point_ids = [p['id'] for p in data['points']]
+        data['pops'] = [p for p in data['pops'] if p['size'] > 0 and \
+                        p['residenceId'] in point_ids and \
+                        p['jobId'] in point_ids]
+        
+        # Update point sizes and pop IDs to ensure consistency
+        for p in data['points']:
+            p['popIds'] = []
+            p['jobs'] = 0
+            p['residents'] = 0
+        for p in data['pops']:
+            points_by_id[p['residenceId']]['popIds'].append(p['id'])
+            points_by_id[p['residenceId']]['residents'] += p['size']
+            points_by_id[p['jobId']]['popIds'].append(p['id'])
+            points_by_id[p['jobId']]['jobs'] += p['size']
+        # Clear out any points that now have no pops
+        data['points'] = [p for p in data['points'] if p['jobs'] + p['residents'] > 0]
+        
+        return data
+        
+        
     
     def print_stats(self):
         """
@@ -305,8 +339,11 @@ class DemandData(dict):
         # Ensure valid bbox if using osmnx
         if routing_method == 'osmnx':
             if bbox is None:
-                print("Warning: specified osmnx routing, but no bbox provided. "
-                      "Routes will not be calculated.")
+                if self.bbox is not None:
+                    bbox = self.bbox
+                else:
+                    print("Warning: specified osmnx routing, but no bbox "
+                          "provided. Routes will not be calculated.")
                 return
             if isinstance(bbox, list):
                 assert len(bbox) == 4, "If bbox is a list, it must be 4 values of "\
@@ -629,6 +666,9 @@ class DemandData(dict):
         
         self['pops'] = [p for p in self['pops'] if p['id'] not in removed_pop_ids]
         
+        # Ensure consistent points data
+        self.update(self.sanitize(self))
+        """
         # Re-build popIds list for points
         for p in self['points']:
             p['popIds'] = []
@@ -638,6 +678,7 @@ class DemandData(dict):
             points_by_id[p['jobId']]['popIds'].append(p['id'])
         # Clear out any points that now have no pops
         self['points'] = [p for p in self['points'] if p['jobs'] + p['residents'] > 0]
+        """
 
     def merge_identical_commutes(self):
         """
@@ -1542,7 +1583,80 @@ class DemandData(dict):
         with open(self.fpoints_schema, "w") as json_file:
             json.dump(points_schema, json_file, indent=4)
     
-    
+    def create_config(self, name, bbox=None, 
+                      description="", creator="", version="", country="",
+                      initial_view_state=None):
+        """
+        Creates the config.json file needed for Railyard import.
+        
+        Inputs
+        ------
+        name: str. Map name as it will appear in Railyard and SB.
+        bbox: list, floats. Bounding box for the map, 
+                            [min_lon, min_lat, max_lon, max_lat]
+                            This should contain the full playable area.
+                            If None, this is estimated from the demand points.
+                            Default: None
+        description: str. Map description that shows in SB.
+        creator: str. Map creator's handle (that's you).
+        version: str. Version in X.Y.Z format.
+        country: str. Two-digit country code.
+        initial_view_state: list, floats. [lon, lat] coordinates for the 
+                            camera's starting position.
+                            If None, it will be estimated from the average of 
+                            the bounding box.
+                            Default: None
+        """
+        if self.verb:
+            print("Creating config.json file")
+            if description=="":
+                print("No description provided.")
+            if creator=="":
+                print("No creator provided.")
+            if version=="":
+                print("No version provided.")
+        
+        if bbox is None:
+            if self.bbox is not None:
+                bbox = self.bbox
+            else:
+                # Estimate it from the point locations
+                if self.verb:
+                    print("Estimating the bbox from points locations")
+                locs = [p['location'] for p in self['points']]
+                bbox = [round(float(v-0.001), 5) for v in np.amin(locs, axis=0)] + \
+                       [round(float(v+0.001), 5) for v in np.amax(locs, axis=0)]
+        
+        total_pop = int(np.sum([p['size'] for p in self['pops']]))
+        
+        if initial_view_state is None:
+            initial_view_state = [round((bbox[0] + bbox[2]) / 2., 5),
+                                  round((bbox[1] + bbox[3]) / 2., 5)]
+        elif not isinstance(initial_view_state, (list, tuple, np.ndarray)):
+            raise ValueError("initial_view_state must be a list of floats in "
+                             "[lon, lat] order.")
+        
+        config = {
+            "code" : self.map_code,
+            "name" : name,
+            "bbox" : bbox,
+            "description" : description,
+            "population" : total_pop,
+            "initialViewState" : {
+                "latitude"  : float(initial_view_state[1]),
+                "longitude" : float(initial_view_state[0]),
+                "zoom" : 12,
+                "bearing" : 0
+            },
+            "creator" : creator,
+            "version" : version
+        }
+        if country != "":
+            config["country"] = country
+        
+        with open(os.path.join(self.outputdir, "config.json"), "w") as f:
+            json.dump(config, f, indent=4)
+        
 
 ################################################################################
 
@@ -1686,4 +1800,3 @@ def merge_points(inps, loc_assignments, sorted_points, size_of_points, pops_by_i
     }
 
     return merged_point, updated_pops
-

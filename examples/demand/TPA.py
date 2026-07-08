@@ -33,6 +33,8 @@ config = {
     "univ_type" : ["university", "university", "university", "community_college", 
                    "community_college", "community_college", "community_college", 
                    "community_college", "university"],
+    "univ_max_dist" : [30000, 30000, 20000, 40000, 40000, 40000, 40000, 40000, 
+                       20000],
     "univ_loc" : [[-82.41223, 28.05957], [-82.63580, 27.76268], [-82.46421, 27.94671], 
                   [-82.50959, 27.97606], [-82.32867, 27.96938], [-82.44468, 27.96269], 
                   [-82.10304, 28.02609], [-82.40024, 27.72210], [-82.71764, 27.75662]],
@@ -72,6 +74,11 @@ config = {
                   "park", "nature_park", "shopping_center", 
                   "shopping_center", "shopping_center", "shopping_center", 
                   "shopping_center", "shopping_center", "shopping_center"],
+    "ent_max_dist" : [30000, 30000, 30000, 40000, 40000, 30000, 30000, 30000,
+                      None, 50000, None, 50000, 50000, 50000, 50000, 30000,
+                      25000, 25000, 25000, 30000, 20000, 30000, 20000, 20000,
+                      20000, 20000, 20000, 35000, 35000, 25000, 30000, 30000, 
+                      30000, 30000, 30000, 30000, 30000],
     "ent_loc" : [
         [-82.45178, 27.94273], [-82.50333, 27.97602],
         [-82.65329, 27.76819], [-82.42120, 28.03371],
@@ -114,6 +121,7 @@ config = {
     "base_name" : ["MacDill Air Force Base", 
                    "US Coast Guard Air Station Clearwater", 
                    "US Coast Guard Sector St. Petersburg"],
+    "base_max_dist" : [30000, 20000, 20000],
     "base_loc" : [[-82.48706, 27.85753], [-82.69797, 27.91156],
                   [-82.63087, 27.75716]],
     "personnel" : [16800, 700,
@@ -164,6 +172,8 @@ for iuniv in range(len(config['universities'])):
             "merge_within" : config['univ_merge_within'][iuniv],
             "residential_split" : univ_size_oncampus / univ_size_modeled,
     }
+    if config['univ_max_dist'][iuniv] is not None:
+        new_point['max_distance'] = config['univ_max_dist'][iuniv]
     tpa.add_points(new_point)
 
 # Entertainment
@@ -177,6 +187,8 @@ for ient in range(len(config['entertainment'])):
             "pop_size" : config['ent_pop_size'][ient],
             "merge_within" : config['ent_merge_within'][ient]
     }
+    if config['ent_max_dist'][ient] is not None:
+        new_point['max_distance'] = config['ent_max_dist'][ient]
     tpa.add_points(new_point)
 
 # Military bases
@@ -199,6 +211,8 @@ for ibase in range(len(config['bases'])):
             "merge_within" : config['base_merge_within'][ibase],
             "residential_split" : onbase_size / modeled_size,
     }
+    if config['base_max_dist'][ibase] is not None:
+        new_point['max_distance'] = config['base_max_dist'][ibase]
     tpa.add_points(new_point)
 
 tpa.calculate_routes(config['ROUTING_METHOD'], config['bbox'])
@@ -209,3 +223,6 @@ tpa.save('TPA/updated_demand_data.json')
 tpa.create_config(name="Tampa Bay", bbox=config['bbox'],
                   description="Bring rapid transit to the Big Guava.", 
                   creator="slurry", version="1.3.0", country="US")
+
+tpa.create_description('tampa-bay', ["""<li><a href="https://github.com/rslurry/subwaybuilder-US-demand-data">US Demand Generator</a></li>""", """<li><a href="https://github.com/Subway-Builder-Modded/depot">Depot</a></li>"""], ["""<li><a href="https://lehd.ces.census.gov/data/">United States Census Bureau Longitudinal Employer-Household Dynamics Origin-Destination Employment Statistics</a></li>"""])
+

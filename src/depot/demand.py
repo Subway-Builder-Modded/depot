@@ -39,6 +39,7 @@ from shapely.geometry import Point, Polygon
 from shapely.prepared import prep
 from sklearn.cluster import AgglomerativeClustering
 from unidecode import unidecode
+import inflect
 
 import depot.utils as U
 
@@ -81,6 +82,8 @@ class DemandData(dict):
                   type ID.
     save_schemas: Save out special demand types and points schema files.
     create_config: Creates the config.json file needed for Railyard import.
+    create_description: Create a Markdown file with the contents for the map 
+                        description during Railyard submission.
     """
     def __init__(self, fdemand, map_code, bbox=None,
                  outputdir=None, HUMAN_READABLE=False, verb=True):
@@ -249,6 +252,14 @@ class DemandData(dict):
         print("Total pop size:", np.sum([p['size'] for p in self['pops']]))
         print("Workers:", np.sum([p['jobs'] for p in self['points']]))
         print("Residents:", np.sum([p['residents'] for p in self['points']]))
+        print("Median point size:", int(np.median([p['jobs'] + p['residents'] for p in self['points']])))
+        print("Mean point size:", round(float(np.mean([p['jobs'] + p['residents'] for p in self['points']])), 1))
+        print("Median pop size:", int(np.median([p['size'] for p in self['pops']])))
+        print("Mean pop size:", round(float(np.mean([p['size'] for p in self['pops']])), 1))
+        print("Median commute distance (km):", round(float(np.median([p['drivingDistance'] / 1000 for p in self['pops']])), 2))
+        print("Mean commute distance (km):", round(float(np.mean([p['drivingDistance'] / 1000 for p in self['pops']])), 2))
+        print("Median commute time (min):", round(float(np.median([p['drivingSeconds'] / 60 for p in self['pops']])), 1))
+        print("Mean commute time (min):", round(float(np.mean([p['drivingSeconds'] / 60 for p in self['pops']])), 1))
     
     def enforce_max_pop_size(self, MAXPOPSIZE):
         """
@@ -1115,8 +1126,10 @@ class DemandData(dict):
                             If not specified, falls back to pre-determined 
                             defaults.
                 - max_distance: (optional) int or float. Maximum commute 
-                                           distance in meters for generated 
-                                           pops.
+                                           distance in meters for most 
+                                           generated pops. Beyond this 
+                                           distance, there is a 10x reduction 
+                                           in probability.
                 - merge_within: (optional) int or float. 
         """
         new_demand_points = []
@@ -1262,12 +1275,9 @@ class DemandData(dict):
             resident_weights = np.nan_to_num(resident_weights, nan=0.0, posinf=0.0, neginf=0.0)
             
             if max_dist is not None:
-                job_weights[dist_of_points > max_dist] = 0.0
-                resident_weights[dist_of_points > max_dist] = 0.0
+                job_weights[dist_of_points > max_dist] /= 10
+                resident_weights[dist_of_points > max_dist] /= 10
             
-            if job_weights.max() == 0 and resident_weights.max() == 0:
-                raise ValueError(f"No points are within {max_dist} m")
-
             # Generate point jobs
             total_req_pop_mass = psize_req * len(required_coords)
             remain_job_capacity = job_capacity - total_req_pop_mass
@@ -1470,6 +1480,8 @@ class DemandData(dict):
         self.special_demand_descs = {}
         self.special_demand_types = {}
         self.special_demand_subtypes = {}
+        self.special_demand_labels = {}
+        plural = inflect.engine() # to pluralize labels
         
         if filepath is None:
             filepath = os.path.join(os.path.dirname(__file__), "special_demand_types.json")
@@ -1493,6 +1505,12 @@ class DemandData(dict):
             
             # Log parent types of points schema
             self.special_demand_types[parent_id] = scode
+            # And labels
+            singular = plural.singular_noun(stype['label']['__default__'].lower())
+            if singular:
+                self.special_demand_labels[scode] = plural.plural(singular).title()
+            else:
+                self.special_demand_labels[scode] = plural.plural(stype['label']['__default__'].lower()).title()
 
             # Handle nested subtypes
             for subtype in stype.get("sub_types", []):
@@ -1657,6 +1675,182 @@ class DemandData(dict):
         with open(os.path.join(self.outputdir, "config.json"), "w") as f:
             json.dump(config, f, indent=4)
         
+    def create_description(self, mapID, methodology, data_sources, 
+                           license="GPLv3"):
+        """
+        Create a Markdown file with the contents for the map description 
+        during Railyard submission.  Provides map details, demand statistics, 
+        special demand information, and more.
+        
+        NOTE: If a point of interest is split between multiple points (e.g., 
+              a large park, large university campus), if the points are named 
+              exactly the same then they will be combined in the produced 
+              description.md file.
+        
+        Inputs
+        ------
+        mapID: str. The map ID of the map submitted to Railyard.
+                    Example: slurry-trondheim-no
+        methodology: list of str. A description of how the map was created.
+                                  Be as detailed as necessary.
+                                  Since Depot and the US Demand Generator are 
+                                  documented projects, if you used those, 
+                                  you can just simply say that.  Include 
+                                  embedded links where appropriate. See TPA 
+                                  example.
+        data_sources: list of str. Names of data products with embedded links 
+                                   used to produce the map.
+                                   See TPA example.
+        license: str. The license you wish to release your map under.
+                      If "GPLv3", text with an embedded link is auto-generated.
+                      Otherwise, you must write out the full text with any 
+                      embedded links to your chosen license.
+                      Default: GPLv3
+        """
+        # Ensure consistent points data
+        self.update(self.sanitize(self))
+        
+        with open(os.path.join(self.outputdir, "config.json"), "r") as f:
+            config = json.load(f)
+        
+        with open(self.fpoints_schema, "r") as f:
+            points = json.load(f)['points']
+        
+        if license == "GPLv3":
+            license = """This map data is released under the <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU General Public License v3.0</a>."""
+
+        minlon, minlat, maxlon, maxlat = [np.radians(v) for v in config["bbox"]]
+        area = (6371**2) * abs(np.sin(minlat) - np.sin(maxlat)) * abs(minlon - maxlon)
+
+        # Header, top-level info
+        description = f"""<h1>{config["name"]}</h1>\n"""\
+        f"""<h3>{config["code"]} · {config["version"]}</h3>\n"""\
+        f"""<p><img src="https://raw.githubusercontent.com/Subway-Builder-Modded/registry/refs/heads/main/maps/{unidecode(mapID)}/gallery/screenshot1.png" alt="Map Preview"></p>\n"""\
+        """<h2>Coverage</h2>\n"""\
+        """<table style="width: auto">\n"""\
+        f"""<tr><td><strong>Bounding box</strong></td><td>{str(config["bbox"]).replace("[","").replace("]","")}</td></tr>\n"""\
+        f"""<tr><td><strong>Bounding Box Area</strong></td><td>{int(np.floor(area))} km²</td></tr>\n"""\
+        """</table>\n\n"""
+
+        npoints = len(self['points'])
+        npops = len(self['pops'])
+        npeople = np.sum([p['size'] for p in self['pops']])
+        assert npeople == config["population"], "Config mis-match. Config " \
+                f"reports {config['population']} people, but loaded demand " \
+                f"data has {npeople} people."
+        
+        # Calculate number per top-level demand category and each unique place
+        # Places with the same name are combined in reporting
+        categories = {k: {"total" : 0, "entries" : {}} for k in self.special_demand_labels.keys()}
+        pops_by_id = {p['id'] : p for p in self['pops']}
+        for p in points:
+            cat = p['point_id'].split('_')[0]
+            name = p['name']['__default__']
+            if name not in categories[cat]['entries'].keys():
+                pt = {
+                    "type" : p['type'],
+                    "size" : 0
+                }
+                if "sub_type" in p.keys():
+                    pt['sub_type'] = p['sub_type']
+                else:
+                    pt['sub_type'] = None
+                categories[cat]['entries'][name] = pt
+            for pid in p['pop_ids']:
+                if p['point_id'] in pid:
+                    categories[cat]['entries'][name]['size'] += pops_by_id[pid]['size']
+                    categories[cat]['total'] += pops_by_id[pid]['size']
+        
+        # Remove unused categories
+        categories = {k : categories[k] for k in categories.keys() if categories[k]['total']}
+        
+        # Calculate total special demand
+        nspec = int(np.sum([categories[k]['total'] for k in categories.keys()]))
+        
+        # Helper function for formatting strings of numbers
+        def fmt(val):
+            return format(val, ",") if val >= 10000 else val
+
+        # Population Summary
+        description += """<h2>Population Summary</h2>\n"""\
+        """<table style="width: auto">\n"""\
+        f"""<tr><td><strong>Total Modeled Demand</strong></td><td align="right">{fmt(config["population"])}</td></tr>\n"""\
+        f"""<tr><td><strong>Modeled Normal Demand</strong></td><td align="right">{fmt(config["population"] - nspec)}</td></tr>\n"""\
+        f"""<tr><td><strong>Modeled Special Demand</strong></td><td align="right">{fmt(nspec)}</td></tr>\n"""\
+        """</table>\n\n"""
+
+        # Map Statistics
+        med_point = int(np.median([p['jobs'] + p['residents'] for p in self['points']]))
+        avg_point = round(float(np.mean([p['jobs'] + p['residents'] for p in self['points']])), 1)
+        med_pop = int(np.median([p['size'] for p in self['pops']]))
+        avg_pop = round(float(np.mean([p['size'] for p in self['pops']])), 1)
+        med_dist = round(float(np.median([p['drivingDistance'] / 1000 for p in self['pops']])), 2)
+        avg_dist = round(float(np.mean([p['drivingDistance'] / 1000 for p in self['pops']])), 2)
+        med_time = round(float(np.median([p['drivingSeconds'] / 60 for p in self['pops']])), 1)
+        avg_time = round(float(np.mean([p['drivingSeconds'] / 60 for p in self['pops']])), 1)
+        
+        stats = [
+            ("Demand Points", npoints),
+            ("Populations", npops),
+            ("Median Point Size", med_point),
+            ("Mean Point Size", avg_point),
+            ("Median Population Size", med_pop),
+            ("Mean Population Size", avg_pop),
+            ("Median Commute Distance (km)", med_dist),
+            ("Mean Commute Distance (km)", avg_dist),
+            ("Median Commute Time (min)", med_time),
+            ("Mean Commute Time (min)", avg_time),
+        ]
+        
+        description += """<h2>Map Statistics</h2>\n"""\
+        """<table style="width: auto">\n"""
+        
+        for label, value in stats:
+            description += f"""<tr><td><strong>{label}</strong></td><td align="right">{fmt(value)}</td></tr>\n"""
+        description += """</table>\n\n"""
+
+        description += "<h2>Special Demand</h2>\n"
+        
+        for cat in sorted(categories.keys()):
+            description += """<details>\n"""\
+            f"""<summary>{self.special_demand_labels[cat]} — {fmt(categories[cat]['total'])}</summary>\n\n"""\
+            """<table style="width: auto">\n"""\
+            """<tr><th align="left">Name</th><th align="right">Modeled Demand</th></tr>\n"""
+            for entry in categories[cat]['entries'].keys():
+                description += f"""<tr><td align="left">&nbsp;&nbsp;{entry}&nbsp;&nbsp;</td><td align="right">&nbsp;&nbsp;{fmt(categories[cat]['entries'][entry]['size'])}&nbsp;&nbsp;</td></tr>\n"""
+            description += """</table>\n\n"""\
+            """</details>\n\n"""
+        
+        description = description[:-1] # cut the last \n
+        description += "<br>\n\n"
+
+        description += """<h2>Additional Features</h2>\n"""\
+        """<ul>\n"""\
+        """<li><strong>Building Collision</strong> — A buildings index is included, providing in-game collision geometry for all non-filtered buildings. Buildings have foundations ranging from -10 m to -80 m, calculated based on the building's height and footprint; the in-game foundations map layer visualizes these.</li>\n"""\
+        """<li><strong>Water Depths</strong> — A water depth index is included, preventing tracks from being placed within the water.  GEBCO bathymetric data are used where available, and a flat -4 m depth is assumed everywhere else; the in-game ocean foundations map layer visualizes these.</li>\n"""\
+        """<li><strong>Place Labels</strong> — The map includes city, suburb, and neighborhood labels extracted from selected OSM place tags.</li>\n"""\
+        """</ul>\n"""\
+        """<h2>Methodology</h2>\n"""\
+        """<ul>\n"""
+        
+        for m in methodology:
+            description += f"""<p>{m}</p>\n"""
+        
+        description += """</ul>\n"""\
+        """<h2>Data Sources</h2>\n"""\
+        """<ul>\n"""
+        
+        for dsource in data_sources:
+            description += f"""<p>{dsource}</p>\n"""
+        
+        description += """</ul>\n"""\
+        """<h2>License</h2>\n"""\
+        f"""<p>{license}</p>\n"""\
+        """<h2>Credits</h2>\n"""\
+        f"""<p>Map authored by {config['creator']}</p>\n"""
+
+        with open(os.path.join(self.outputdir, "description.md"), "w") as f:
+            f.write(description)
 
 ################################################################################
 

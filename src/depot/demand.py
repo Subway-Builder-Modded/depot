@@ -1278,6 +1278,13 @@ class DemandData(dict):
                 job_weights[dist_of_points > max_dist] /= 10
                 resident_weights[dist_of_points > max_dist] /= 10
             
+            # Hard cap gravity model to <= 200 km
+            job_weights[dist_of_points > 200000] = 0
+            resident_weights[dist_of_points > 200000] = 0
+            
+            if job_weights.max() == 0 and resident_weights.max() == 0:
+                raise ValueError(f"No points are within 200 km")
+            
             # Generate point jobs
             total_req_pop_mass = psize_req * len(required_coords)
             remain_job_capacity = job_capacity - total_req_pop_mass

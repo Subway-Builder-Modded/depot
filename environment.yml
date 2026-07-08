@@ -17,3 +17,5 @@ dependencies:
   - mercantile=1.2.1
   - matplotlib=3.10.9
   - scipy=1.17.1
+  - unidecode=1.4.0
+  - inflect=7.5.0

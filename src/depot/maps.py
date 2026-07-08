@@ -1846,8 +1846,10 @@ class MapGen:
                     else:
                         # Map layer not needed - roads.geojson handles this
                         continue
-                elif kind in ['college', 'commercial', 'hospital', 'industrial', 
-                              'residential', 'retail', 'school', 'university']:
+                elif kind in ['commercial', 'retail']:
+                    dest, final_kind, final_rank = "commercial", kind, rank
+                elif kind in ['college', 'hospital', 'industrial', 
+                              'residential', 'school', 'university']:
                     dest, final_kind, final_rank = kind, kind, rank
                 elif kind == 'park':
                     dest, final_kind, final_rank = "landuse", kind, rank

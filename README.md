@@ -23,6 +23,8 @@ This library is confirmed to work with the following Python package versions:
 | mercantile         | 1.2.1         |
 | netcdf4            | 1.7.4         |
 | osmnx              | 2.1.0         |
+| unidecode          | 1.4.0         |
+| inflect            | 7.5.0         |
 
 Users can prepare a [conda](https://docs.conda.io/projects/conda/en/stable/index.html) 
 environment with these package versions using the supplied environment file:
@@ -59,14 +61,18 @@ In the repo directory, run
     pip install .
 
 The library is now installed and can be imported.  See `examples/` for scripts 
-that use the library to build a map.
+that use the library to build a map and generate special demand data.
 
 ## Usage
 
 At present, `depot` includes the ability to create the non-demand files for 
-custom maps.  This is handled through the `MapGen` class.
+custom maps, and manipulate an existing demand data file.
 
-### `MapGen` inputs
+### Generating maps
+
+This is handled through the `depot.maps.MapGen` class.
+
+#### `MapGen` inputs
 | Parameter          | Description       |
 | ------------------ |:-------------:|
 | `city`             | str. 2-4 character city code.        |
@@ -99,7 +105,7 @@ custom maps.  This is handled through the `MapGen` class.
 | `RAM`              | int or float. Sets the amount of RAM in GB to use when calling mapshaper.  If you get heap allocation errors, increase this value.  Keep in mind your OS and other programs still need to run, so don't try to allocate your system's full RAM amount. Default: 4         |
 | `verb`             | bool. Determines whether to print additional info or not. Default: True        |
 
-### `MapGen` methods that you care about
+#### `MapGen` methods that you care about
 | Class method                 | Description                                                    |
 | ---------------------------- |:--------------------------------------------------------------:|
 | `extract_base_data`          | osmium extract for base layers                                 |
@@ -120,7 +126,7 @@ simplification parameters.  Run `check_labels` to see what types of labels are a
 frequency to inform what you categorize for `add_labels`.  Users may want to re-run `add_labels` multiple times 
 to decide which place tags should be in which categories.
 
-### Labels
+#### Labels
 Users may want to look at OSM's list of available 'place' keys: <https://wiki.openstreetmap.org/wiki/Key:place>
 The `check_labels` method reports what types of places are used in the map, and how often.
 
@@ -141,8 +147,22 @@ For reference, the setups slurry uses for the maps they have made are provided b
 
 Experiment and see what provides the right amount of labeling.
 
+### Demand data
+
+Depot offers the `depot.demand.DemandData` class to edit existing demand data files. 
+This includes
+- sanitizing demand data (validates general file structure, removes empty points/pops, ensures the points' popIds, jobs, and residents counts are consistent with the pop data),
+- scaling demand data,
+- adding special demand,
+- calculating commutes,
+- generating the config.json file needed for map submission to Railyard, and
+- generating a description.md file that can be used for the map description when submitting to Railyard.
+
+To see an example of how this module can be used for special demand data, see `examples/demand/TPA.py`.
+For detailed documentation, users should look at the docstrings within the `src/depot/demand.py` file.
+
 ## Future plans
-- A module to create and manipulate demand data
+- Incorporate the [US Demand Generator](https://github.com/rslurry/subwaybuilder-US-demand-data).
 
 ## Contributions
 This tool is designed to serve the needs of the map-making community. 
@@ -154,4 +174,4 @@ Open an issue here on GitHub or provide feedback in Discord.
 
 ## License
 
-This library is made available under the GPL v3 license.  See LICENSE for details.
+This library is made available under the GNU General Public License v3 license.  See LICENSE for details.

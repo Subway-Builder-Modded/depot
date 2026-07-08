@@ -1130,6 +1130,8 @@ class DemandData(dict):
                                            generated pops. Beyond this 
                                            distance, there is a 10x reduction 
                                            in probability.
+                                           Depot has a hard-coded limit of 
+                                           200 km for any generated commutes.
                 - merge_within: (optional) int or float. 
         """
         new_demand_points = []

@@ -1606,13 +1606,22 @@ class MapGen:
         # Precompute Y bounds
         y_bounds = [(min_lat + (cy * step_y), min_lat + ((cy + 1) * step_y)) for cy in range(len(grid_y))]
         
+        # Select optimal number of parallel workers
+        # Never use more than 1/2 the available cores
         ncores = max(1, min(self.ncores, os.cpu_count() // 2))
+        
+        if self.verb:
+            core_str = "core" if ncores == 1 else "cores"
+            print(f"  Processing ocean depth indices using {ncores} {core_str}")
+        
         all_cx = list(range(len(grid_x)))
         chunk_size = int(math.ceil(len(all_cx) / ncores / 50))
         cx_chunks = [all_cx[i:i + chunk_size] for i in range(0, len(all_cx), chunk_size)]
         
+        # Calculate depth indices in parallel
         parallel_results = []
         with ProcessPoolExecutor(max_workers=ncores) as executor:
+            # Submit all chunks to start running in parallel immediately
             futures = {
                 executor.submit(
                     self._process_columns_worker,
@@ -1673,7 +1682,7 @@ class MapGen:
     
     @staticmethod
     def _process_columns_worker(cx_chunk, min_lon, step_x, step_y, grid_y_len, y_bounds, 
-                                spatial_tree, valid_water_contours, eps=0):
+                                spatial_tree, valid_water_contours):
         """
         Registers contour intersection references per cell
         """
@@ -1685,7 +1694,7 @@ class MapGen:
             
             for cy in range(grid_y_len):
                 cell_min_y, cell_max_y = y_bounds[cy]
-                cell_poly = box(cell_min_x-eps, cell_min_y-eps, cell_max_x+eps, cell_max_y+eps)
+                cell_poly = box(cell_min_x, cell_min_y, cell_max_x, cell_max_y)
                 
                 intersecting_indices = spatial_tree.query(cell_poly)
                 

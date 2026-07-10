@@ -1599,9 +1599,6 @@ class MapGen:
                     "p": [exterior] + holes,
                 })
         
-        all_depths = [d['d'] for d in depth_entries]
-        min_d = min(all_depths) if all_depths else 0.0
-
         unbroken_bathy_data = {
             "depths": depth_entries
         }
@@ -1672,6 +1669,10 @@ class MapGen:
             
         if not cells:
             cells = [[0, 0, 0]]
+        
+        # Format for game and save
+        all_depths = [d['d'] for d in depth_entries]
+        min_d = min(all_depths) if all_depths else 0.0
         
         # Format for game and save clipped contours to self.fdepths
         self.bathy_data = {

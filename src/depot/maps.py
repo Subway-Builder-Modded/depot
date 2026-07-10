@@ -1237,6 +1237,7 @@ class MapGen:
                                Default: 4
         """
         self.fdepths = os.path.join(self.city_dir, "ocean_depth_index.json.gz")
+        self.fdepths_contours = self.fdepths.replace(".json.gz", "_contours.json.gz")
         
         if not self.reprocess_bathymetry_data:
             # Open and load the gzipped JSON data, if available
@@ -1597,6 +1598,16 @@ class MapGen:
                     "d": final_level,
                     "p": [exterior] + holes,
                 })
+        
+        all_depths = [d['d'] for d in depth_entries]
+        min_d = min(all_depths) if all_depths else 0.0
+
+        unbroken_bathy_data = {
+            "depths": depth_entries
+        }
+
+        with gzip.open(self.fdepths_contours, "wt", encoding="utf-8") as f:
+            json.dump(unbroken_bathy_data, f, separators=(',', ':'))
 
         # Re-build STRtree using the flattened valid_water_contours 
         # (This ensures tree query indices perfectly match depth_entries positions)
@@ -1621,7 +1632,6 @@ class MapGen:
         # Calculate depth indices in parallel
         parallel_results = []
         with ProcessPoolExecutor(max_workers=ncores) as executor:
-            # Submit all chunks to start running in parallel immediately
             futures = {
                 executor.submit(
                     self._process_columns_worker,
@@ -1640,35 +1650,38 @@ class MapGen:
                         print(f"\n[ERROR] Chunk failed with exception: {e}")
                     pbar.update(1)
 
-        # Merge isolated process outputs sequentially
-        cell_refs = {}
-        for local_cell_refs in parallel_results:
-            for (cx, cy), global_indices in local_cell_refs.items():
-                cell_refs.setdefault((cx, cy), []).extend(global_indices)
+        # Merge and flatten clipped geometries
+        cell_data = {}
+        for local_cell_data in parallel_results:
+            for (cx, cy), entries in local_cell_data.items():
+                cell_data.setdefault((cx, cy), []).extend(entries)
         
-        # Format cell structure: [cx, cy, idx_0, idx_1, ...]
+        clipped_depth_entries = []
         cells = []
-        for (cx, cy), refs in sorted(cell_refs.items()):
-            unique_refs = list(set(refs))
-            # Sort remaining indexes so shallowest depth values 'd' are placed first
-            sorted_refs = sorted(unique_refs, key=lambda idx: depth_entries[idx]['d'], reverse=True)
-            cells.append([int(cx), int(cy), *[int(i) for i in sorted_refs]])
+        
+        for (cx, cy), entries in sorted(cell_data.items()):
+            # Sort items so shallowest depth values 'd' are placed first per cell
+            sorted_entries = sorted(entries, key=lambda e: e['d'], reverse=True)
+            
+            cell_indices = []
+            for entry in sorted_entries:
+                clipped_depth_entries.append(entry)
+                cell_indices.append(len(clipped_depth_entries) - 1)
+                
+            cells.append([int(cx), int(cy), *cell_indices])
             
         if not cells:
             cells = [[0, 0, 0]]
         
-        # Format for game and save
-        all_depths = [d['d'] for d in depth_entries]
-        min_d = min(all_depths) if all_depths else 0.0
-
+        # Format for game and save clipped contours to self.fdepths
         self.bathy_data = {
             "cs": float(CELL_SIZE),
             "bbox": self.bbox,
             "grid": [len(grid_x), len(grid_y)],
             "cells": cells,
-            "depths": depth_entries,
+            "depths": clipped_depth_entries,
             "stats": {
-                "count": int(len(depth_entries)),
+                "count": int(len(clipped_depth_entries)),
                 "minDepth": int(min_d) if float(min_d).is_integer() else float(min_d),
                 "maxDepth": 0
             }
@@ -1686,7 +1699,7 @@ class MapGen:
         """
         Registers contour intersection references per cell
         """
-        local_cell_refs = {}
+        local_cell_data = {}
 
         for cx in cx_chunk:
             cell_min_x = min_lon + (cx * step_x)
@@ -1699,12 +1712,37 @@ class MapGen:
                 intersecting_indices = spatial_tree.query(cell_poly)
                 
                 for idx in intersecting_indices:
-                    _, part_geom = valid_water_contours[idx]
+                    final_level, part_geom = valid_water_contours[idx]
                     
                     if cell_poly.intersects(part_geom):
-                        local_cell_refs.setdefault((cx, cy), []).append(int(idx))
+                        # Clip the full geometry strictly to this cell's bounding box
+                        clipped_geom = cell_poly.intersection(part_geom)
+                        if clipped_geom.is_empty:
+                            continue
+                        
+                        # Normalize to flat list of polygons
+                        if clipped_geom.geom_type == "Polygon":
+                            clipped_parts = [clipped_geom]
+                        elif clipped_geom.geom_type == "MultiPolygon":
+                            clipped_parts = list(clipped_geom.geoms)
+                        else:
+                            continue
+
+                        for clipped_part in clipped_parts:
+                            if clipped_part.is_empty:
+                                continue
+                                
+                            exterior = [[round(c[0], 6), round(c[1], 6)] for c in clipped_part.exterior.coords]
+                            holes = [[[round(c[0], 6), round(c[1], 6)] for c in hole.coords] for hole in clipped_part.interiors]
+                            pb = [round(x, 6) for x in clipped_part.bounds]
+                            
+                            local_cell_data.setdefault((cx, cy), []).append({
+                                "b": pb,
+                                "d": final_level,
+                                "p": [exterior] + holes,
+                            })
                                         
-        return local_cell_refs
+        return local_cell_data
     
     def _generate_ocean_depth_tiles(self):
         """
@@ -1713,11 +1751,16 @@ class MapGen:
         self.ocean_foundations_geojson = os.path.join(self.city_dir, "ocean_foundations.geojson")
         self.ocean_foundations_mbtiles = os.path.join(self.city_dir, "ocean_foundations.mbtiles")
         if self.bathy_data is None:
-            self.load_bathymetry_data()
+                self.load_bathymetry_data()
+        if os.path.exists(self.fdepths_contours):
+            with gzip.open(self.fdepths_contours, "rt", encoding="utf-8") as f:
+                depth_contours = json.load(f)
+                if self.verb:
+                    print("Loaded previously processed bathymetry data")
         
         # Process bathymetry data into geojson format
         bathy_geojson_data = {'type' : 'FeatureCollection', 'features' : []}
-        for f in self.bathy_data['depths']:
+        for f in depth_contours['depths']:
             feat = {
                 'type' : 'Feature',
                 'geometry' : {'type' : 'Polygon', 'coordinates' : f['p']},
@@ -2018,6 +2061,20 @@ class MapGen:
             if aerodrome_geoms:
                 aerodrome_mask = unary_union(aerodrome_geoms)
         
+        # Build commercial mask
+        commercial_mask = None
+        if "commercial" in new_layers_data:
+            commercial_geoms = []
+            for feat in new_layers_data["commercial"]:
+                if feat["properties"].get("kind") == "commercial":
+                    a_geom = shape(feat["geometry"]).intersection(tile_bounds)
+                    if not a_geom.is_empty:
+                        if not a_geom.is_valid:
+                            a_geom = a_geom.buffer(0)
+                        commercial_geoms.append(a_geom)
+            if commercial_geoms:
+                commercial_mask = unary_union(commercial_geoms)
+        
         # ── Clip landuse against the dissolved water mask ───────────
         # OSM `landuse=park` (and the other green/recreational classes
         # that collapse to kind='park' in _get_kind_and_rank) frequently
@@ -2058,7 +2115,14 @@ class MapGen:
                         geom = geom.difference(aerodrome_mask)
                         if not geom.is_valid:
                             geom = geom.buffer(0)
-
+                
+                # Subtract commercial from parks
+                if kind == "park" and commercial_mask is not None and not commercial_mask.is_empty:
+                    if geom.intersects(commercial_mask):
+                        geom = geom.difference(commercial_mask)
+                        if not geom.is_valid:
+                            geom = geom.buffer(0)
+                
                 # Final geometry verification & cleaning
                 if geom.is_empty or geom.area < 1.0:
                     continue  
@@ -2072,6 +2136,52 @@ class MapGen:
                 feat["geometry"] = mapping(geom)
                 kept.append(feat)
             new_layers_data["landuse"] = kept
+        
+        # Subtract water and aerodrome from commercial
+        if "commercial" in new_layers_data:
+            kept = []
+            for feat in new_layers_data["commercial"]:
+                kind = feat["properties"].get("kind")
+                
+                if kind not in ["commercial"]:
+                    kept.append(feat)
+                    continue
+                
+                geom = shape(feat["geometry"])
+                geom = geom.intersection(tile_bounds)
+                if geom.is_empty:
+                    continue
+                if not geom.is_valid:
+                    geom = geom.buffer(0)
+                
+                # Subtract water from commercial
+                if merged_result is not None and not merged_result.is_empty:
+                    if geom.intersects(merged_result):
+                        geom = geom.difference(merged_result)
+                        if not geom.is_valid:
+                            geom = geom.buffer(0)
+                
+                # Subtract aerodromes from commercial
+                if kind == "commercial" and aerodrome_mask is not None and not aerodrome_mask.is_empty:
+                    if geom.intersects(aerodrome_mask):
+                        geom = geom.difference(aerodrome_mask)
+                        if not geom.is_valid:
+                            geom = geom.buffer(0)
+                
+                # Final geometry verification & cleaning
+                if geom.is_empty or geom.area < 1.0:
+                    continue  
+
+                if geom.geom_type not in ("Polygon", "MultiPolygon"):
+                    parts = [g for g in geom.geoms 
+                             if g.geom_type in ("Polygon", "MultiPolygon")]
+                    if not parts:
+                        continue
+                    geom = unary_union(parts) if len(parts) > 1 else parts[0]
+                feat["geometry"] = mapping(geom)
+                kept.append(feat)
+            new_layers_data["commercial"] = kept
+        
         
         layers_to_encode = []
         for name, feats in new_layers_data.items():

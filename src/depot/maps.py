@@ -1125,7 +1125,6 @@ class MapGen:
         
         if self.cleanup_files:
             os.remove(merged_mbtiles)
-            #os.remove(foundations_mbtiles)
             if self.create_building_foundations:
                 os.remove(self.buildings_foundations_mbtiles)
         
@@ -1346,6 +1345,7 @@ class MapGen:
 
             # Corrected Pass: Deeper polygons get clipped by shallower ones
             contours_by_level = []
+            eps = 1e-4
             
             for i in range(len(raw_stacked_contours)):
                 current_level, current_geom = raw_stacked_contours[i]
@@ -1361,14 +1361,21 @@ class MapGen:
                     # Combine all shallow caps into one unified cutter mask
                     shallow_mask = unary_union(shallower_geoms)
                     if current_geom.intersects(shallow_mask):
-                        # Punch holes in the deep trench where the shallow shelf caps it
-                        current_geom = current_geom.difference(shallow_mask)
+                        # Shrink the shallow mask slightly for slight overlap
+                        shrunk_shallow_mask = shallow_mask.buffer(-eps)
+                        if not shrunk_shallow_mask.is_empty:
+                            # Punch holes in the deep trench where the shallow shelf caps it
+                            current_geom = current_geom.difference(shrunk_shallow_mask)
+                        else:
+                            # If the shallow layer completely vanishes from a negative buffer,
+                            # it was smaller than the buffer itself; ignore
+                            pass
                 
                 if not current_geom.is_valid:
                     current_geom = current_geom.buffer(0)
                     
                 if not current_geom.is_empty and current_geom.area > 1e-9:
-                    contours_by_level.append((current_level, current_geom))
+                    contours_by_level.append((current_level, current_geom.buffer(eps)))
         else:
             if self.verb:
                 print("  No ocean depths detected")
@@ -1497,7 +1504,7 @@ class MapGen:
                 water_gaps = water_gaps.buffer(0)
                 
             if self.verb:
-                print("  Patching water gaps at -4m depth")
+                print("  Patching water gaps at -5m depth")
             
             # Find if a -5m layer index already exists in contours_by_level
             minus_5_idx = next((i for i, (lvl, _) in enumerate(contours_by_level) if lvl == -5), None)
@@ -1553,36 +1560,64 @@ class MapGen:
         if self.verb:
             print("  Evaluating cells")
         
-        # Sanitize contours
+        # Sanitize contours and apply the export buffer to the full contiguous shapes
         valid_water_contours = []
+        depth_entries = []
+
         for level, geom in water_clipped_contours:
             if not shapely.is_valid(geom):
                 geom = shapely.make_valid(geom)
-            valid_water_contours.append((level, geom))
+            
+            buffered_geom = geom.buffer(0)
+            
+            # Normalize to flat list of polygons
+            if buffered_geom.geom_type == "Polygon":
+                poly_parts = [buffered_geom]
+            elif buffered_geom.geom_type == "MultiPolygon":
+                poly_parts = list(buffered_geom.geoms)
+            else:
+                poly_parts = []
+
+            final_level = final_level_cache[level]
+
+            for part in poly_parts:
+                if part.is_empty:
+                    continue
+                    
+                # Append to the worker's geometry lookup array
+                valid_water_contours.append((final_level, part))
+                
+                # Append to the global json serialization array
+                exterior = [[round(c[0], 6), round(c[1], 6)] for c in part.exterior.coords]
+                holes = [[[round(c[0], 6), round(c[1], 6)] for c in hole.coords] for hole in part.interiors]
+                pb = [round(x, 6) for x in part.bounds]
+                
+                depth_entries.append({
+                    "b": pb,
+                    "d": final_level,
+                    "p": [exterior] + holes,
+                })
+
+        # Re-build STRtree using the flattened valid_water_contours 
+        # (This ensures tree query indices perfectly match depth_entries positions)
+        geoms_for_tree = [item[1] for item in valid_water_contours]
+        spatial_tree = shapely.STRtree(geoms_for_tree)
 
         # Precompute Y bounds
         y_bounds = [(min_lat + (cy * step_y), min_lat + ((cy + 1) * step_y)) for cy in range(len(grid_y))]
         
-        # Select optimal number of parallel workers
-        # Never use more than 1/2 the available cores
         ncores = max(1, min(self.ncores, os.cpu_count() // 2))
-        if self.verb:
-            core_str = "core" if ncores == 1 else "cores"
-            print(f"  Processing ocean depth indices using {ncores} {core_str}")
-        
         all_cx = list(range(len(grid_x)))
         chunk_size = int(math.ceil(len(all_cx) / ncores / 50))
         cx_chunks = [all_cx[i:i + chunk_size] for i in range(0, len(all_cx), chunk_size)]
         
-        # Calculate depth indices in parallel
         parallel_results = []
         with ProcessPoolExecutor(max_workers=ncores) as executor:
-            # Submit all chunks to start running in parallel immediately
             futures = {
                 executor.submit(
                     self._process_columns_worker,
                     chunk, min_lon, step_x, step_y, len(grid_y), y_bounds,
-                    spatial_tree, valid_water_contours, final_level_cache
+                    spatial_tree, valid_water_contours
                 ): chunk 
                 for chunk in cx_chunks
             }
@@ -1594,26 +1629,24 @@ class MapGen:
                         parallel_results.append(result)
                     except Exception as e:
                         print(f"\n[ERROR] Chunk failed with exception: {e}")
-                    
                     pbar.update(1)
 
-        # Merge isolated process outputs sequentially back into the instance payload
-        depth_entries = []
+        # Merge isolated process outputs sequentially
         cell_refs = {}
-        global_entry_offset = 0
-
-        for local_depth_entries, local_cell_refs in parallel_results:
-            depth_entries.extend(local_depth_entries)
-            for (cx, cy), indices in local_cell_refs.items():
-                global_indices = [idx + global_entry_offset for idx in indices]
+        for local_cell_refs in parallel_results:
+            for (cx, cy), global_indices in local_cell_refs.items():
                 cell_refs.setdefault((cx, cy), []).extend(global_indices)
-            global_entry_offset += len(local_depth_entries)
         
-        # Format sparse lookup list
-        cells = [
-            [int(cx), int(cy), *[int(i) for i in refs]]
-            for (cx, cy), refs in sorted(cell_refs.items())
-        ] or [[0, 0, 0]]
+        # Format cell structure: [cx, cy, idx_0, idx_1, ...]
+        cells = []
+        for (cx, cy), refs in sorted(cell_refs.items()):
+            unique_refs = list(set(refs))
+            # Sort remaining indexes so shallowest depth values 'd' are placed first
+            sorted_refs = sorted(unique_refs, key=lambda idx: depth_entries[idx]['d'], reverse=True)
+            cells.append([int(cx), int(cy), *[int(i) for i in sorted_refs]])
+            
+        if not cells:
+            cells = [[0, 0, 0]]
         
         # Format for game and save
         all_depths = [d['d'] for d in depth_entries]
@@ -1622,8 +1655,7 @@ class MapGen:
         self.bathy_data = {
             "cs": float(CELL_SIZE),
             "bbox": self.bbox,
-            "grid": [len(grid_x), 
-                     len(grid_y)],
+            "grid": [len(grid_x), len(grid_y)],
             "cells": cells,
             "depths": depth_entries,
             "stats": {
@@ -1641,20 +1673,11 @@ class MapGen:
     
     @staticmethod
     def _process_columns_worker(cx_chunk, min_lon, step_x, step_y, grid_y_len, y_bounds, 
-                                spatial_tree, valid_water_contours, final_level_cache):
+                                spatial_tree, valid_water_contours, eps=0):
         """
-        Processes water depth index in an isolated process. 
-        No access to `self` to avoid Pickling Errors.
+        Registers contour intersection references per cell
         """
-        local_depth_entries = []
         local_cell_refs = {}
-        
-        def _iter_polygon_parts(geom):
-            if geom.geom_type == "Polygon":
-                return [geom]
-            elif geom.geom_type == "MultiPolygon":
-                return list(geom.geoms)
-            return []
 
         for cx in cx_chunk:
             cell_min_x = min_lon + (cx * step_x)
@@ -1662,44 +1685,17 @@ class MapGen:
             
             for cy in range(grid_y_len):
                 cell_min_y, cell_max_y = y_bounds[cy]
-                cell_poly = box(cell_min_x, cell_min_y, cell_max_x, cell_max_y)
+                cell_poly = box(cell_min_x-eps, cell_min_y-eps, cell_max_x+eps, cell_max_y+eps)
                 
                 intersecting_indices = spatial_tree.query(cell_poly)
                 
                 for idx in intersecting_indices:
-                    level, level_geom = valid_water_contours[idx]
+                    _, part_geom = valid_water_contours[idx]
                     
-                    if cell_poly.within(level_geom):
-                        clipped_parts = [cell_poly]
-                    else:
-                        clipped = shapely.clip_by_rect(
-                            level_geom, 
-                            cell_min_x, cell_min_y, 
-                            cell_max_x, cell_max_y
-                        )
-                        if clipped.is_empty or clipped.area <= 1e-9:
-                            continue
-                        clipped_parts = _iter_polygon_parts(clipped)
-                        
-                    for part in clipped_parts:
-                        if part.is_empty:
-                            continue
-                        
-                        exterior = [[round(c[0], 6), round(c[1], 6)] for c in part.exterior.coords]
-                        holes = [[[round(c[0], 6), round(c[1], 6)] for c in hole.coords] for hole in part.interiors]
-                        pb = [round(x, 6) for x in part.bounds]
-                        
-                        final_level = final_level_cache[level]
-                        entry_index = len(local_depth_entries)
-                        
-                        local_depth_entries.append({
-                            "b": pb,
-                            "d": final_level,
-                            "p": [exterior] + holes,
-                        })
-                        local_cell_refs.setdefault((cx, cy), []).append(entry_index)
-                        
-        return local_depth_entries, local_cell_refs
+                    if cell_poly.intersects(part_geom):
+                        local_cell_refs.setdefault((cx, cy), []).append(int(idx))
+                                        
+        return local_cell_refs
     
     def _generate_ocean_depth_tiles(self):
         """

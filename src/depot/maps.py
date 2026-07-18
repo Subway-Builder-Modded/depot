@@ -979,20 +979,24 @@ class MapGen:
         """
         if self.verb:
             print("***** Processing Roads and Aeroways *****")
-        city_pbf = os.path.join(self.city_dir, f"{self.city.lower()}.osm.pbf")
         roads_pbf = os.path.join(self.city_dir, "roads.pbf")
         roads_geojson = os.path.join(self.city_dir, "roads.geojson")
         
+
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        bbox_str = ",".join(map(str, self.bbox))
+        
         # 1. Roads
         roads_str = ",".join(roads_list)
-        self._run_command(["osmium", "tags-filter", city_pbf, 
+        self._run_command(["osmium", "tags-filter", self.city_osmpbf, 
                            f"w/highway={roads_str}", "-o", roads_pbf, 
                            "--overwrite"])
-        this_dir = os.path.dirname(os.path.abspath(__file__))
+        
         self._run_command(["osmium", "export", roads_pbf, 
                            "-c", os.path.join(this_dir, "roads_config.json"),
                            "-o", roads_geojson, "--geometry-types=linestring", 
                            "--overwrite"])
+        
         if self.cleanup_files:
             os.remove(roads_pbf)
         
@@ -1010,11 +1014,38 @@ class MapGen:
         )
         self._apply_jq(roads_geojson, jq_roads)
         
+        # Cut roads precisely at the bbox boundary
+        clip_box = box(*self.bbox)
+        
+        with open(roads_geojson, 'r') as f:
+            geojson_data = json.load(f)
+        
+        clipped_features = []
+        
+        for feature in geojson_data.get('features', []):
+            # Convert GeoJSON geometry to a Shapely geometry
+            geom = shape(feature['geometry'])
+            
+            # Perform the intersection cut
+            clipped_geom = geom.intersection(clip_box)
+            
+            # Only keep it if it still has a valid geometry inside the box
+            if not clipped_geom.is_empty:
+                # Update the feature's geometry with the clipped version
+                feature['geometry'] = mapping(clipped_geom)
+                clipped_features.append(feature)
+        
+        # Overwrite the GeoJSON file with the clipped features
+        geojson_data['features'] = clipped_features
+        
+        with open(roads_geojson, 'w') as f:
+            json.dump(geojson_data, f)
+        
         # 2. Aeroways
         aero_pbf = os.path.join(self.city_dir, "runways_taxiways.pbf")
         aero_geojson = os.path.join(self.city_dir, "runways_taxiways.geojson")
         
-        self._run_command(["osmium", "tags-filter", city_pbf, 
+        self._run_command(["osmium", "tags-filter", self.city_osmpbf, 
                            "wr/aeroway=runway,taxiway", "-o", aero_pbf, 
                            "--overwrite"])
         self._run_command(["osmium", "export", aero_pbf, "-o", aero_geojson, 
@@ -1037,6 +1068,33 @@ class MapGen:
         
         # 3. Buffer Aeroways
         self._buffer_linestrings(aero_geojson)
+        
+        # Cut roads precisely at the bbox boundary
+        clip_box = box(*self.bbox)
+        
+        with open(aero_geojson, 'r') as f:
+            geojson_data = json.load(f)
+        
+        clipped_features = []
+        
+        for feature in geojson_data.get('features', []):
+            # Convert GeoJSON geometry to a Shapely geometry
+            geom = shape(feature['geometry'])
+            
+            # Perform the intersection cut
+            clipped_geom = geom.intersection(clip_box)
+            
+            # Only keep it if it still has a valid geometry inside the box
+            if not clipped_geom.is_empty:
+                # Update the feature's geometry with the clipped version
+                feature['geometry'] = mapping(clipped_geom)
+                clipped_features.append(feature)
+        
+        # Overwrite the GeoJSON file with the clipped features
+        geojson_data['features'] = clipped_features
+        
+        with open(aero_geojson, 'w') as f:
+            json.dump(geojson_data, f)
     
     def generate_pmtiles(self):
         """

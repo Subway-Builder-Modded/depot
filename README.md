@@ -49,6 +49,7 @@ available within the path to create the non-demand files needed for custom maps:
 * jq
 * [pmtiles](https://github.com/protomaps/go-pmtiles/releases)
 * [planetiler.jar](https://github.com/onthegomap/planetiler/releases)
+* (Only if using the demand module to set up a local OSRM server) Docker
 
 Except for planetiler.jar, these must be executable so that `depot` can 
 determine that they are available (e.g., if `pmtiles` is not executable, 

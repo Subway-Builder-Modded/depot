@@ -9,6 +9,7 @@ import gzip
 import math
 import xarray as xr
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from itertools import groupby
 import numpy as np
 import sqlite3
 import zlib
@@ -68,6 +69,8 @@ class MapGen:
     _get_kind_and_rank : Helper to map OSM/Planetiler tags to game-engine 
                          specific kinds and ranks.
     _process_tile_worker : Worker function to handle vector tile re-mapping.
+    _get_local_bbox_mask : Helper function for tile boundaries in 
+                           _process_tile_worker
     fix_mbtiles : Translates 'clean' mbtiles to 'fixed' mbtiles with proper 
                   schema and hierarchy.
     _generate_building_tiles : Processes building GeoJSON into zoom-specific 
@@ -249,6 +252,7 @@ class MapGen:
                 self._merge_osmpbf_files()
             else:
                 self.osmpbf = osmpbf[0]
+        self.city_osmpbf = os.path.join(self.city_dir, f"{self.city.lower()}.osm.pbf")
         self.buildings_geojson = buildings_geojson
         self.REFETCH_BUILDINGS = bool(redownload_buildings)
         self.create_building_foundations = bool(create_building_foundations)
@@ -359,7 +363,6 @@ class MapGen:
         """
         if self.verb:
             print(f"***** Extracting base data for {self.city} *****")
-        out_pbf = os.path.join(self.city_dir, f"{self.city.lower()}.osm.pbf")
         bbox_str = ",".join(map(str, self.bbox))
         
         cmd = [
@@ -368,14 +371,14 @@ class MapGen:
             "tags=natural=water,landuse=water,landuse=reservoir,"
             "waterway=riverbank,waterway=dock,highway=residential",
             "--bbox", bbox_str, self.osmpbf, "-o", 
-            out_pbf, "--overwrite"
+            self.city_osmpbf, "--overwrite"
         ]
         self._run_command(cmd)
         
         # Filter out buildings
         nobuilding_pbf = os.path.join(self.city_dir, f"{self.city.lower()}-nobuildings.osm.pbf")
         self._run_command([
-            "osmium", "tags-filter", out_pbf, 
+            "osmium", "tags-filter", self.city_osmpbf, 
             "n/building=yes", "w/building=yes", "-i",
             "-o", nobuilding_pbf, "--overwrite"
         ])
@@ -519,6 +522,10 @@ class MapGen:
 
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(final_json, f, separators=(',', ':'))
+        
+        with gzip.open(output_path+'.gz', "wt", encoding="utf-8") as f:
+            json.dump(final_json, f, separators=(',', ':'))
+        
         if self.verb:
             print(f"Successfully saved building index to {output_path}")
 
@@ -972,20 +979,24 @@ class MapGen:
         """
         if self.verb:
             print("***** Processing Roads and Aeroways *****")
-        city_pbf = os.path.join(self.city_dir, f"{self.city.lower()}.osm.pbf")
         roads_pbf = os.path.join(self.city_dir, "roads.pbf")
         roads_geojson = os.path.join(self.city_dir, "roads.geojson")
         
+
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        bbox_str = ",".join(map(str, self.bbox))
+        
         # 1. Roads
         roads_str = ",".join(roads_list)
-        self._run_command(["osmium", "tags-filter", city_pbf, 
+        self._run_command(["osmium", "tags-filter", self.city_osmpbf, 
                            f"w/highway={roads_str}", "-o", roads_pbf, 
                            "--overwrite"])
-        this_dir = os.path.dirname(os.path.abspath(__file__))
+        
         self._run_command(["osmium", "export", roads_pbf, 
                            "-c", os.path.join(this_dir, "roads_config.json"),
                            "-o", roads_geojson, "--geometry-types=linestring", 
                            "--overwrite"])
+        
         if self.cleanup_files:
             os.remove(roads_pbf)
         
@@ -1003,11 +1014,38 @@ class MapGen:
         )
         self._apply_jq(roads_geojson, jq_roads)
         
+        # Cut roads precisely at the bbox boundary
+        clip_box = box(*self.bbox)
+        
+        with open(roads_geojson, 'r') as f:
+            geojson_data = json.load(f)
+        
+        clipped_features = []
+        
+        for feature in geojson_data.get('features', []):
+            # Convert GeoJSON geometry to a Shapely geometry
+            geom = shape(feature['geometry'])
+            
+            # Perform the intersection cut
+            clipped_geom = geom.intersection(clip_box)
+            
+            # Only keep it if it still has a valid geometry inside the box
+            if not clipped_geom.is_empty:
+                # Update the feature's geometry with the clipped version
+                feature['geometry'] = mapping(clipped_geom)
+                clipped_features.append(feature)
+        
+        # Overwrite the GeoJSON file with the clipped features
+        geojson_data['features'] = clipped_features
+        
+        with open(roads_geojson, 'w') as f:
+            json.dump(geojson_data, f)
+        
         # 2. Aeroways
         aero_pbf = os.path.join(self.city_dir, "runways_taxiways.pbf")
         aero_geojson = os.path.join(self.city_dir, "runways_taxiways.geojson")
         
-        self._run_command(["osmium", "tags-filter", city_pbf, 
+        self._run_command(["osmium", "tags-filter", self.city_osmpbf, 
                            "wr/aeroway=runway,taxiway", "-o", aero_pbf, 
                            "--overwrite"])
         self._run_command(["osmium", "export", aero_pbf, "-o", aero_geojson, 
@@ -1030,6 +1068,33 @@ class MapGen:
         
         # 3. Buffer Aeroways
         self._buffer_linestrings(aero_geojson)
+        
+        # Cut roads precisely at the bbox boundary
+        clip_box = box(*self.bbox)
+        
+        with open(aero_geojson, 'r') as f:
+            geojson_data = json.load(f)
+        
+        clipped_features = []
+        
+        for feature in geojson_data.get('features', []):
+            # Convert GeoJSON geometry to a Shapely geometry
+            geom = shape(feature['geometry'])
+            
+            # Perform the intersection cut
+            clipped_geom = geom.intersection(clip_box)
+            
+            # Only keep it if it still has a valid geometry inside the box
+            if not clipped_geom.is_empty:
+                # Update the feature's geometry with the clipped version
+                feature['geometry'] = mapping(clipped_geom)
+                clipped_features.append(feature)
+        
+        # Overwrite the GeoJSON file with the clipped features
+        geojson_data['features'] = clipped_features
+        
+        with open(aero_geojson, 'w') as f:
+            json.dump(geojson_data, f)
     
     def generate_pmtiles(self):
         """
@@ -1305,13 +1370,20 @@ class MapGen:
             dense_depths = interp_func(interp_points).reshape(dense_mesh_lon.shape)
             
             # Generate contours
+            if self.verb:
+                print("  Generating contours")
             fig, ax = plt.subplots()
             contour_set = ax.contourf(dense_lons, dense_lats, dense_depths, levels=DEPTH_LEVELS)
             plt.close(fig)
 
             # First Pass: Group geometries by depth level
+            if self.verb:
+                print("  Grouping by depth")
             raw_stacked_contours = []
-            for i in range(len(contour_set.allsegs)):
+            nsegs = len(contour_set.allsegs)
+            for i in range(nsegs):
+                if self.verb:
+                    print("   ", i+1, '/', nsegs, end='\r', flush=True)
                 segments = contour_set.allsegs[i]
                 level = contour_set.levels[i] 
                 if level >= 0 or not segments:
@@ -1339,44 +1411,57 @@ class MapGen:
                         
                 if level_polys:
                     raw_stacked_contours.append((level, unary_union(level_polys)))
+            if self.verb:
+                print("") # because last print statement had \r
+            
+            # Sort shallowest to deepest, iterate in that order
+            # Keep running log of shallower geoms to subtract from deeper geoms
+            raw_stacked_contours.sort(key=lambda x: x[0], reverse=True)
 
-            # Sort from deepest to shallowest (ascending order: e.g., -16, -12, -8, -4)
-            # This ensures we process the deep layers first so shallow layers can slice them up
-            raw_stacked_contours.sort(key=lambda x: x[0], reverse=False)
+            # Deeper polygons get clipped by shallower ones
+            if self.verb:
+                print("  Clipping deeper polygons by shallower ones")
 
-            # Corrected Pass: Deeper polygons get clipped by shallower ones
             contours_by_level = []
             eps = 1e-4
-            
-            for i in range(len(raw_stacked_contours)):
-                current_level, current_geom = raw_stacked_contours[i]
+            cumulative_shallow_mask = None
+            ncontours = len(raw_stacked_contours)
+            processed_count = 0  # Tracker for the progress print
+
+            # Group the sorted shallow-to-deep list
+            shallow_to_deep_groups = groupby(raw_stacked_contours, key=lambda x: x[0])
+
+            for current_level, group in shallow_to_deep_groups:
+                current_geoms = [geom for lvl, geom in group]
                 
-                # Look ahead in our deepest-to-shallowest array to find all shallower layers
-                # Subtract every shallower polygon that overlaps this deep one
-                shallower_geoms = [
-                    sh_geom for sh_lvl, sh_geom in raw_stacked_contours[i+1:] 
-                    if sh_lvl > current_level
-                ]
-                
-                if shallower_geoms:
-                    # Combine all shallow caps into one unified cutter mask
-                    shallow_mask = unary_union(shallower_geoms)
-                    if current_geom.intersects(shallow_mask):
-                        # Shrink the shallow mask slightly for slight overlap
-                        shrunk_shallow_mask = shallow_mask.buffer(-eps)
-                        if not shrunk_shallow_mask.is_empty:
-                            # Punch holes in the deep trench where the shallow shelf caps it
-                            current_geom = current_geom.difference(shrunk_shallow_mask)
-                        else:
-                            # If the shallow layer completely vanishes from a negative buffer,
-                            # it was smaller than the buffer itself; ignore
-                            pass
-                
-                if not current_geom.is_valid:
-                    current_geom = current_geom.buffer(0)
+                # Clip current level by all shallower levels
+                for current_geom in current_geoms:
+                    processed_count += 1
+                    if self.verb:
+                        print(f"    {processed_count} / {ncontours}", end='\r', flush=True)
+                        
+                    if cumulative_shallow_mask and not cumulative_shallow_mask.is_empty:
+                        if current_geom.intersects(cumulative_shallow_mask):
+                            current_geom = current_geom.difference(cumulative_shallow_mask)
                     
-                if not current_geom.is_empty and current_geom.area > 1e-9:
-                    contours_by_level.append((current_level, current_geom.buffer(eps)))
+                    if not current_geom.is_valid:
+                        current_geom = current_geom.buffer(0)
+                        
+                    if not current_geom.is_empty and current_geom.area > 1e-9:
+                        contours_by_level.append((current_level, current_geom.buffer(eps)))
+                        
+                # Add this entire level to the mask for the next deeper level down
+                level_union = unary_union(current_geoms).buffer(-eps)
+                if cumulative_shallow_mask is None:
+                    cumulative_shallow_mask = level_union
+                else:
+                    cumulative_shallow_mask = unary_union([cumulative_shallow_mask, level_union])
+
+            # Flip the final results back so they are deepest -> shallowest
+            contours_by_level.reverse()
+
+            if self.verb:
+                print("") # Clear the carriage return line
         else:
             if self.verb:
                 print("  No ocean depths detected")
@@ -1822,12 +1907,18 @@ class MapGen:
         # Temporary storage for water geometries to be dissolved
         water_geoms_to_dissolve = []
         water_id_map = [] # List of tuples: (id, geometry)
-        tile_bounds = box(0, 0, 4096, 4096)
+        
+        # Create the tile only where it is within the map's bbox
+        nominal_tile_box = box(0, 0, 4096, 4096)
+        # Get the map bbox converted to this tile's local 0-4096 pixel space
+        local_map_box = self._get_local_bbox_mask(z, x, y)
+        # Clipping target is the intersection of the two
+        tile_bounds = nominal_tile_box.intersection(local_map_box)
         
         safe_buffer = self._calculate_buffer(z)
         
         water_kinds = {
-            'ocean', 'river', 'canal', 'drain', 'swimming_pool', 'lake', 
+            'ocean', 'river', 'canal', 'swimming_pool', 'lake', 
             'cenote', 'lagoon', 'oxbow', 'rapids', 'stream', 'stream_pool', 
             'pond', 'reflecting_pool', 'reservoir'
         }
@@ -1927,8 +2018,8 @@ class MapGen:
             park_geoms = []
             kept_landuse_feats = []
             
-            # We will save the first park's properties to act as a template for the dissolved geometries.
-            # (Note: Unique IDs or specific 'ref' tags will be lost during this merge).
+            # Save the first park's properties to act as a template for the dissolved geometries
+            # (Note: Unique IDs or specific 'ref' tags are lost during this merge)
             base_park_properties = {"kind": "park", "sort_rank": 189} 
 
             for feat in new_layers_data["landuse"]:
@@ -1947,40 +2038,28 @@ class MapGen:
             if park_geoms:
                 # Union all park geometries to dissolve overlapping interior boundaries
                 # Slight buffer to remove tiny slivers in the middle of polygons
-                swelled_parks = [g.buffer(4) for g in park_geoms]
-                merged_parks = unary_union(swelled_parks)
-                merged_parks = merged_parks.buffer(-4)
-                #merged_parks = unary_union(park_geoms)
+                merged_parks = unary_union(park_geoms)
+                merged_parks = merged_parks.buffer(4).buffer(-4)
                 
                 # Fix potential self-intersections after the union
                 merged_parks = shapely.make_valid(merged_parks)
                 
-                # Explode the result into individual Polygon features
-                final_park_parts = []
-                if isinstance(merged_parks, Polygon):
-                    final_park_parts.append(merged_parks)
-                elif isinstance(merged_parks, MultiPolygon):
-                    final_park_parts.extend(list(merged_parks.geoms))
-                elif hasattr(merged_parks, 'geoms'):
-                    # Fallback for GeometryCollections
-                    for g in merged_parks.geoms:
-                        if isinstance(g, Polygon):
-                            final_park_parts.append(g)
-                        elif isinstance(g, MultiPolygon):
-                            final_park_parts.extend(list(g.geoms))
-
-                # Reconstruct the features
-                for part in final_park_parts:
-                    if part.is_empty or part.area < 0.01:
-                        continue
-                    
-                    # Ensure exterior ring is CCW
-                    part = orient(part, sign=1.0)
-                    
+                # Extract only Polygon/MultiPolygon parts 
+                # (Drops random Points/Lines generated by make_valid)
+                if merged_parks.geom_type not in ("Polygon", "MultiPolygon"):
+                    parts = [g for g in merged_parks.geoms 
+                             if g.geom_type in ("Polygon", "MultiPolygon")]
+                    if not parts:
+                        merged_parks = None
+                    else:
+                        merged_parks = unary_union(parts) if len(parts) > 1 else parts[0]
+                
+                # Verify we have a valid shape left to map
+                if merged_parks and not merged_parks.is_empty and merged_parks.area >= 0.01:
                     kept_landuse_feats.append({
-                        "geometry": mapping(part),
+                        "geometry": mapping(merged_parks),
                         "properties": base_park_properties,
-                        "type": "Polygon"
+                        "type": merged_parks.geom_type
                         # Drop "id"
                     })
             
@@ -2026,8 +2105,6 @@ class MapGen:
                 # Ensure exterior is CCW/CW as per spec
                 part = orient(part, sign=1.0)
                 # Find which original IDs belong to this new dissolved 'part'
-                # We use a small negative buffer (ebbing) to ensure the 
-                # centroid or intersection is truly inside the new part.
                 associated_ids = []
                 for orig_id, orig_geom in water_id_map:
                     if part.intersects(orig_geom):
@@ -2098,10 +2175,15 @@ class MapGen:
                 
                 geom = shape(feat["geometry"])
                 geom = geom.intersection(tile_bounds)
+                
+                # Snap park to the same grid as water
+                # This prevents micro-slivers during difference()
+                geom = set_precision(geom, grid_size=1.0)
+                
                 if geom.is_empty:
                     continue
                 if not geom.is_valid:
-                    geom = geom.buffer(0)
+                    geom = geom.buffer(0) 
                 
                 # Subtract water from parks and aerodromes
                 if merged_result is not None and not merged_result.is_empty:
@@ -2109,7 +2191,7 @@ class MapGen:
                         geom = geom.difference(merged_result)
                         if not geom.is_valid:
                             geom = geom.buffer(0)
-
+                
                 # Subtract aerodromes from parks
                 if kind == "park" and aerodrome_mask is not None and not aerodrome_mask.is_empty:
                     if geom.intersects(aerodrome_mask):
@@ -2134,8 +2216,10 @@ class MapGen:
                     if not parts:
                         continue
                     geom = unary_union(parts) if len(parts) > 1 else parts[0]
+                
                 feat["geometry"] = mapping(geom)
                 kept.append(feat)
+                
             new_layers_data["landuse"] = kept
         
         # Subtract water and aerodrome from commercial
@@ -2196,6 +2280,49 @@ class MapGen:
         return (
             z, x, y, zlib.compress(mapbox_vector_tile.encode(layers_to_encode))
         )
+    
+    def _get_local_bbox_mask(self, z, x, y):
+        """
+        Returns a Shapely box representing the global self.bbox mapped to 
+        the local 0-4096 Y-UP coordinates of TMS tile (z, x, y).
+        """
+        # Standard Web Mercator extent constants
+        EXTENT = 20037508.342789244
+        tile_size = (EXTENT * 2) / (2**z)
+        
+        # Tile boundaries in global meters (TMS y-sorting: 0 is bottom)
+        tile_min_x = -EXTENT + (x * tile_size)
+        tile_max_x = -EXTENT + ((x + 1) * tile_size)
+        tile_min_y = -EXTENT + (y * tile_size)
+        tile_max_y = -EXTENT + ((y + 1) * tile_size)
+        
+        # Project global WGS84 bbox to Web Mercator meters
+        def wgs84_to_3857(lon, lat):
+            x_m = lon * EXTENT / 180.0
+            # Guard against log(0) at poles
+            lat = max(-85.05112878, min(85.05112878, lat))
+            y_m = math.log(math.tan((90.0 + lat) * math.pi / 360.0)) / (math.pi / 180.0)
+            return x_m, y_m * EXTENT / 180.0
+
+        lon_min, lat_min, lon_max, lat_max = self.bbox
+        map_min_x, map_min_y = wgs84_to_3857(lon_min, lat_min)
+        map_max_x, map_max_y = wgs84_to_3857(lon_max, lat_max)
+        
+        # Check if map completely covers the tile (avoids float slivers)
+        if map_min_x <= tile_min_x and map_max_x >= tile_max_x and map_min_y <= tile_min_y and map_max_y >= tile_max_y:
+            return box(0, 0, 4096, 4096) # Tile is fully inside map. No clipping needed.
+
+        # Check for complete separation
+        if map_min_x >= tile_max_x or map_max_x <= tile_min_x or map_min_y >= tile_max_y or map_max_y <= tile_min_y:
+            return box(0, 0, 0, 0) # Tile is entirely outside map.
+            
+        # Map intersection boundaries to local pixel grid
+        local_min_x = max(0.0, min(4096.0, ((map_min_x - tile_min_x) / tile_size) * 4096))
+        local_max_x = max(0.0, min(4096.0, ((map_max_x - tile_min_x) / tile_size) * 4096))
+        local_min_y = max(0.0, min(4096.0, ((map_min_y - tile_min_y) / tile_size) * 4096))
+        local_max_y = max(0.0, min(4096.0, ((map_max_y - tile_min_y) / tile_size) * 4096))
+        
+        return box(local_min_x, local_min_y, local_max_x, local_max_y)
 
     def fix_mbtiles(self):
         """
@@ -2491,7 +2618,7 @@ class MapGen:
         """Checks city.osm.pbf and reports the types and counts of places."""
         places_osmpbf = os.path.join(self.city_dir, "places.osm.pbf")
         places_geojson = os.path.join(self.city_dir, "places.geojson")
-        self._run_command(["osmium", "tags-filter", self.osmpbf, 
+        self._run_command(["osmium", "tags-filter", self.city_osmpbf, 
                            f"n/place{self.places_suffix}", 
                            "-o", places_osmpbf, "--overwrite"])
         
@@ -2549,7 +2676,7 @@ class MapGen:
             geojson = os.path.join(self.city_dir, f"{name}.geojson")
             
             # Extract and Export
-            filter_cmd = ["osmium", "tags-filter", self.osmpbf]
+            filter_cmd = ["osmium", "tags-filter", self.city_osmpbf]
             # Build the osmium filter string
             # e.g., "n/place=city n/place=borough"
             filter_cmd.extend([f"n/place{self.places_suffix}={t}" for t in tags])

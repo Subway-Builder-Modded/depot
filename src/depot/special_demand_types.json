@@ -547,7 +547,29 @@
       "icon": "ship",
       "metadata": {
         "source": "mlit_port_csv"
-      }
+      },
+      "sub_types": [
+        {
+          "id": "marina",
+          "label": {
+            "__default__": "Marina",
+            "en": "Marina"
+          },
+          "metadata": {
+            "classification": "Recreational and private boating"
+          }
+        },
+        {
+          "id": "shipyard",
+          "label": {
+            "__default__": "Shipyard",
+            "en": "Shipyard"
+          },
+          "metadata": {
+            "classification": "A place that manufactures watercraft"
+          }
+        }
+      ]
     },
     {
       "id": "religious_institution",
@@ -698,7 +720,39 @@
         "ja": "大型ショッピングモール・百貨店・アウトレットなど広域集客型の商業施設",
         "en": "Large-scale retail destinations drawing weekend and evening visitors from a wide catchment area"
       },
-      "icon": "shopping-bag"
+      "icon": "shopping-bag",
+      "sub_types": [
+        {
+          "id": "casino",
+          "label": {
+            "__default__": "Casino",
+            "en": "Casino"
+          },
+          "metadata": {
+            "classification": "A facility for gambling"
+          }
+        },
+        {
+          "id": "marketplace",
+          "label": {
+            "__default__": "Marketplace",
+            "en": "Marketplace"
+          },
+          "metadata": {
+            "classification": "A location where numerous vendors offer their products"
+          }
+        },
+        {
+          "id": "shop",
+          "label": {
+            "__default__": "Shop",
+            "en": "Shop"
+          },
+          "metadata": {
+            "classification": "A business that sells goods or services to customers"
+          }
+        }
+      ]
     },
     {
       "id": "sports_facility",

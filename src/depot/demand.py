@@ -22,6 +22,7 @@ import sys, os
 from collections import defaultdict
 import copy
 import shutil
+import subprocess
 from datetime import datetime, timezone
 import functools
 import gzip
@@ -60,6 +61,8 @@ class DemandData(dict):
     print_stats: Prints summary statistics about the demand data.
     enforce_max_pop_size: Splits populations that exceed a maximum pop size 
                           into smaller chunks.
+    prepare_osrm: Calls commands to set up a local OSRM server via Docker for 
+                  routing calculations.
     calculate_routes: Calculates driving distances and durations for population
                       paths using either OSMnx (parallelized) or a local OSRM 
                       server.
@@ -86,7 +89,8 @@ class DemandData(dict):
                         description during Railyard submission.
     """
     def __init__(self, fdemand, map_code, bbox=None,
-                 outputdir=None, HUMAN_READABLE=False, verb=True):
+                 outputdir=None, IGNORE_SCHEMA=False,
+                 HUMAN_READABLE=False, verb=True):
         """
         Inputs
         ------
@@ -100,6 +104,9 @@ class DemandData(dict):
                                    directory relative to where you are running 
                                    the code from.
                                    Default: None
+        IGNORE_SCHEMA: (optional) bool.  Determines whether to ignore special 
+                                         demand schema when loading/saving 
+                                         demand data.
         HUMAN_READABLE: (optional) bool. Determines whether to save the demand 
                                          file with line breaks and indentation 
                                          for readability.
@@ -115,6 +122,7 @@ class DemandData(dict):
         self.map_code = map_code
         self.bbox = bbox
         self.outputdir = outputdir
+        self.IGNORE_SCHEMA = bool(IGNORE_SCHEMA)
         if self.outputdir is None:
             self.outputdir = self.map_code
         
@@ -138,7 +146,7 @@ class DemandData(dict):
             if p['id'].split('_')[0] in self.special_demand_ids.keys():
                 self.has_existing_special_demand = True
                 break
-        if self.has_existing_special_demand:
+        if self.has_existing_special_demand and not self.IGNORE_SCHEMA:
             if not os.path.exists(self.fpoints_schema):
                 raise FileNotFoundError("Provided demand_data.json file has "
                         f"special demand points, but the points schema file "
@@ -177,7 +185,8 @@ class DemandData(dict):
             else:
                 json.dump(dict(self), json_file, indent=None, separators=(',', ':'))
         
-        self.save_schemas()
+        if not self.IGNORE_SCHEMA:
+            self.save_schemas()
 
     def load(self, fdemand=None):
         """Loads data from the JSON file and updates the dictionary.
@@ -240,8 +249,6 @@ class DemandData(dict):
         data['points'] = [p for p in data['points'] if p['jobs'] + p['residents'] > 0]
         
         return data
-        
-        
     
     def print_stats(self):
         """
@@ -310,6 +317,96 @@ class DemandData(dict):
         
         if self.verb:
             print(f"Pops after enforcing size <= {MAXPOPSIZE}: {len(self['pops'])}")
+    
+    def prepare_osrm(self, osmpbf, bbox=None, port=5000, pad=0.1, 
+                     remove_unnecessary_containers=True,
+                     force_recreate=False):
+        """
+        Calls commands to set up a local OSRM server via Docker for routing 
+        calculations.
+        
+        Inputs
+        ------
+        osmpbf: str. Path to local .osm.pbf file to use for OSRM server.
+                     Can be a pre-processed .osm.pbf that covers only this map,
+                     or a general .osm.pbf that covers a much larger area.
+        bbox: list of floats. Bounding box of the map.
+                              [min_lon, min_lat, max_lon, max_lat]
+                              Falls back to self.bbox is not provided (None).
+                              Must be provided either as an input here 
+                              or via self.bbox.
+                              Default: None
+        port: (optional) int. Port to use for the local OSRM server.
+                              Default: 5000
+        pad: (optional) float. Pad the bbox by this amount in degrees to ensure
+                               routing for locations near the edge of the map's 
+                               bbox.
+                               Default: 0.1
+        remove_unnecessary_containers: (optional) bool. Determines whether to 
+                                       remove Docker containers that are 
+                                       created during this routine that are 
+                                       not absolutely necessary to keep around 
+                                       afterward.  See Notes below.
+                                       Default: True
+        force_recreate: (optional) bool. Determines whether to forcibly 
+                                         recreate the OSRM server, destroying 
+                                         any existing Docker container with 
+                                         that same name.
+                                         Default: False
+        
+        Notes
+        -----
+        This requires osmium and Docker.  Ensure you have configured things 
+        correctly so that you can use both programs from the command line.
+        
+        A map-specific .osm.pbf will be extracted to the output directory.
+        
+        Three docker containers will be created through this routine:
+            <map code>_extract
+            <map code>_contract
+            <map code>
+        Only the <map code> Docker container is needed at the end, as that 
+        is the container that is used for routing.  The extract and contract 
+        containers are intermediary steps needed before the routing 
+        container can be created. 
+        
+        Only one OSRM server can run at a time on a given port.
+        You can stop a server by entering 
+            'docker stop <map code>'.
+        You can later start that same server by entering 
+            'docker start <map code>'. 
+        """
+        # Extract the local area into .osm.pbf
+        if bbox is None:
+            if self.bbox is None:
+                raise ValueError("Must provide bbox to create an OSRM server.")
+            else:
+                bbox = self.bbox
+        bbox_str = ','.join([str(bbox[0]-pad), str(bbox[1]-pad),
+                             str(bbox[2]+pad), str(bbox[3]+pad)])
+        fextract = os.path.join(self.outputdir, f"{self.map_code}.osm.pbf")
+        subprocess.run("osmium extract --strategy complete_ways --bbox "
+        f"{bbox_str} {osmpbf} -o {fextract} --overwrite", shell=True)
+        
+        # Extract for OSRM
+        if force_recreate:
+            subprocess.run(f'docker rm {self.map_code}_extract', shell=True)
+        subprocess.run(f'docker run --name {self.map_code}_extract -t -v "{os.path.abspath(self.outputdir)}:/data" ghcr.io/project-osrm/osrm-backend osrm-extract /data/{os.path.basename(fextract)} -p /opt/car.lua', shell=True)
+        
+        # Contract
+        if force_recreate:
+            subprocess.run(f'docker rm {self.map_code}_contract', shell=True)
+        subprocess.run(f'docker run --name {self.map_code}_contract -t -v "{os.path.abspath(self.outputdir)}:/data" ghcr.io/project-osrm/osrm-backend osrm-contract /data/{os.path.basename(fextract).replace(".osm.pbf", ".osrm")}', shell=True)
+        
+        # Start OSRM server
+        if force_recreate:
+            subprocess.run(f'docker rm {self.map_code}', shell=True)
+        subprocess.run(f'docker run --name {self.map_code} -d -p {port}:{port} -v "/{os.path.abspath(self.outputdir)}:/data" ghcr.io/project-osrm/osrm-backend osrm-routed --algorithm ch /data/{os.path.basename(fextract).replace(".osm.pbf", ".osrm")}', shell=True)
+        
+        # Clean up
+        if remove_unnecessary_containers:
+            subprocess.run(f'docker rm {self.map_code}_extract', shell=True)
+            subprocess.run(f'docker rm {self.map_code}_contract', shell=True)
     
     def calculate_routes(self, routing_method="osmnx", bbox=None, 
                                max_workers=1, osrm_port=5000):
@@ -500,8 +597,6 @@ class DemandData(dict):
         """
         Scales raw job demand by a constant factor.
         Special demand are not impacted.
-            Note: Current implementation only excludes jobs at point IDs that 
-                  begin with "UNI_", "ENT_", "AIR_", "MIL_", "FER_", or "BOR_"
         
         Inputs
         ------
@@ -517,7 +612,7 @@ class DemandData(dict):
             points_by_id = {p["id"]: p for p in self["points"]}
 
             for p in list(self['pops']):
-                if p['jobId'][:4] in ["UNI_", "ENT_", "AIR_", "MIL_", "FER_", "BOR_"]:
+                if p['jobId'].split('_')[0] in self.special_demand_ids:
                     continue
                 size = p['size']
                 new_size = int(size * demand_factor)
@@ -544,153 +639,201 @@ class DemandData(dict):
                                `consolidate_max_size`.
                                Default: [2000, 4000, 80000, 16000]
         """
-        print("Consolidating pops of sizes <", consolidate_max_size, 
-              "among points within", consolidate_distance, "meters")
+        if self.verb:
+            print("Consolidating pops of sizes <", consolidate_max_size, 
+                  "among points within", consolidate_distance, "meters")
         if not isinstance(consolidate_max_size, list):
             consolidate_max_size = [consolidate_max_size]
         if not isinstance(consolidate_distance, list):
             consolidate_distance = [consolidate_distance]
-        assert len(consolidate_max_size) == len(consolidate_distance), "Must provide the same number of values for both consolidate_max_size and consolidate_distance. Received:\nconsolidate_max_size = " + str(consolidate_max_size) + "\nconsolidate_distance = " + str(consolidate_distance)
+        assert len(consolidate_max_size) == len(consolidate_distance), \
+            "Must provide the same number of values for both " \
+            "consolidate_max_size and consolidate_distance.\n" \
+            f"Received:\nconsolidate_max_size = {consolidate_max_size}\n" + \
+            f"consolidate_distance = {consolidate_distance}"
             
-        point_map = {p['id']: p for p in self['points']}
-        point_ids = [p['id'] for p in self['points']]
-        id_to_idx = {pid: i for i, pid in enumerate(point_ids)}
+        points = demand['points']
+        pops = demand['pops']
         
-        # Calculate distance matrix between points
-        coords = np.array([p['location'] for p in self['points']])
-        lons, lats = coords[:, 0], coords[:, 1]
-        dist_matrix = U.haversine(lons[:, None], lats[:, None], lons[None, :], lats[None, :])
+        # ID to Index mapping
+        pt_ids = [p['id'] for p in points]
+        id_to_idx = {pid: i for i, pid in enumerate(pt_ids)}
         
-        delta_res = {pid: 0 for pid in point_ids}
-        delta_job = {pid: 0 for pid in point_ids}
-        removed_pop_ids = set()
+        # Point arrays
+        pt_coords = np.array([p['location'] for p in points], dtype=float) # Assumes [lon, lat]
+        pt_residents = np.array([p['residents'] for p in points], dtype=float)
+        pt_jobs = np.array([p['jobs'] for p in points], dtype=float)
+        pt_totals = pt_residents + pt_jobs
         
-        # Helper for target selection
-        def get_target_id(id1, id2, size, delta_dict):
-            d1, d2 = delta_dict[id1], delta_dict[id2]
-            if d1 < 0 and d2 >= 0: return id1
-            if d2 < 0 and d1 >= 0: return id2
+        # Identify ignored points upfront
+        ignore_job = np.array([pid.split('_')[0] in self.special_demand_ids 
+                               for pid in pt_ids])
+        ignore_res = np.array([pid.split('_')[0] in self.special_demand_ids 
+                               for pid in pt_ids])
+
+        # Pop arrays
+        pop_size = np.array([p['size'] for p in pops], dtype=float)
+        pop_res_idx = np.array([id_to_idx[p['residenceId']] for p in pops])
+        pop_job_idx = np.array([id_to_idx[p['jobId']] for p in pops])
+        pop_is_removed = np.zeros(len(pops), dtype=bool)
+
+        # Tracking deltas
+        delta_res = np.zeros(len(points), dtype=float)
+        delta_job = np.zeros(len(points), dtype=float)
+
+        # Vectorized target selection
+        def get_target_idx(idx1, idx2, size, delta_arr):
+            d1, d2 = delta_arr[idx1], delta_arr[idx2]
+            if d1 < 0 and d2 >= 0: return idx1
+            if d2 < 0 and d1 >= 0: return idx2
             if abs(d1 - d2) > size:
-                return id1 if d1 < d2 else id2
-            s1 = point_map[id1]['jobs'] + point_map[id1]['residents']
-            s2 = point_map[id2]['jobs'] + point_map[id2]['residents']
-            return id1 if s1 < s2 else id2
-        
+                return idx1 if d1 < d2 else idx2
+            return idx1 if pt_totals[idx1] < pt_totals[idx2] else idx2
+
+        # Process it
         for ic in range(len(consolidate_max_size)):
-            # Pass 1: Group pops by job to consolidate residences
+            max_sz = consolidate_max_size[ic]
+            max_dist = consolidate_distance[ic]
+            
+            # Pass 1: Consolidate residences
             if self.verb:
                 print("  Consolidating residences")
             job_groups = defaultdict(list)
-            for pop in self['pops']:
-                job_groups[pop['jobId']].append(pop)
             
-            pop_map = {p['id']: p for p in self['pops']}
-            
-            for job_id, group in job_groups.items():
-                if job_id[:4] in ["UNI_", "ENT_", "AIR_", "MIL_", "FER_", "BOR_"]:
-                    continue
-                if len(group) < 2: continue
-                # Sort by size so we try to merge smaller ones first
-                group.sort(key=lambda x: pop_map[x['id']]['size'])
-                
-                for i in range(len(group)):
-                    p_i = pop_map[group[i]['id']]
-                    if p_i['id'] in removed_pop_ids or pop_map[p_i['id']]['size'] >= consolidate_max_size[ic]: continue
+            # Group pop indices by job index
+            for i in range(len(pops)):
+                if not pop_is_removed[i] and not ignore_job[pop_job_idx[i]]:
+                    job_groups[pop_job_idx[i]].append(i)
                     
-                    for j in range(i + 1, len(group)):
-                        p_j = pop_map[group[j]['id']]
-                        if p_j['id'] in removed_pop_ids or pop_map[p_j['id']]['size'] >= consolidate_max_size[ic]: continue
+            for job_idx, group in job_groups.items():
+                if len(group) < 2: continue
+                
+                # Sort pop indices by their current sizes
+                group.sort(key=lambda idx: pop_size[idx])
+                
+                for i_idx in range(len(group)):
+                    pi = group[i_idx]
+                    if pop_is_removed[pi] or pop_size[pi] >= max_sz:
+                        continue
+                    
+                    lon1, lat1 = pt_coords[pop_res_idx[pi]]
+                    
+                    for j_idx in range(i_idx + 1, len(group)):
+                        pj = group[j_idx]
+                        if pop_is_removed[pj] or pop_size[pj] >= max_sz:
+                            continue
                         
-                        # Spatial check
-                        if dist_matrix[id_to_idx[p_i['residenceId']], id_to_idx[p_j['residenceId']]] <= consolidate_distance[ic]:
-                            target = get_target_id(p_i['residenceId'], p_j['residenceId'], pop_map[p_j['id']]['size'], delta_res)
-                            survivor, victim = (p_i, p_j) if p_i['residenceId'] == target else (p_j, p_i)
+                        lon2, lat2 = pt_coords[pop_res_idx[pj]]
+                        dist = U.haversine(lon1, lat1, lon2, lat2)
+                        
+                        if dist <= max_dist:
+                            target = get_target_idx(pop_res_idx[pi], pop_res_idx[pj], pop_size[pj], delta_res)
+                            survivor, victim = (pi, pj) if pop_res_idx[pi] == target else (pj, pi)
                             
-                            # Update metadata
-                            v_size = pop_map[victim['id']]['size']
-                            source_id = victim['residenceId']
-                            point_map[source_id]['residents'] -= v_size
-                            point_map[target]['residents'] += v_size
-                            delta_res[source_id] -= v_size
+                            v_size = pop_size[victim]
+                            src_idx = pop_res_idx[victim]
+                            
+                            # Update Point states
+                            pt_residents[src_idx] -= v_size
+                            pt_residents[target] += v_size
+                            delta_res[src_idx] -= v_size
                             delta_res[target] += v_size
+                            pt_totals[src_idx] -= v_size
+                            pt_totals[target] += v_size
                             
-                            if victim['id'] in point_map[source_id]['popIds']:
-                                point_map[source_id]['popIds'].remove(victim['id'])
-                            if survivor['id'] not in point_map[target]['popIds']:
-                                point_map[target]['popIds'].append(survivor['id'])
+                            # Update Pop states
+                            pop_size[survivor] += v_size
+                            pop_res_idx[survivor] = target
+                            pop_is_removed[victim] = True
                             
-                            # Merge logic
-                            pop_map[survivor['id']]['size'] += v_size
-                            pop_map[survivor['id']]['residenceId'] = target
-                            removed_pop_ids.add(victim['id'])
-                            if victim['id'] == p_i['id']:
+                            if victim == pi:
                                 break
-                            
-                            if pop_map[survivor['id']]['size'] >= consolidate_max_size[ic]: break
-            
-            # Pass 2: Group pops by residence to consolidate jobs
+                            if pop_size[survivor] >= max_sz:
+                                break
+
+            # Pass 2: Consolidate jobs
             if self.verb:
                 print("  Consolidating jobs")
-            # Refresh pop list to exclude removed ones
-            remaining_pops = [p for p in self['pops'] if p['id'] not in removed_pop_ids]
             res_groups = defaultdict(list)
-            for pop in remaining_pops:
-                res_groups[pop['residenceId']].append(pop)
             
-            for res_id, group in res_groups.items():
-                if res_id[:4] in ["UNI_", "MIL_"]:
-                    continue
-                if len(group) < 2: continue
-                group.sort(key=lambda x: pop_map[x['id']]['size'])
-                
-                for i in range(len(group)):
-                    p_i = pop_map[group[i]['id']]
-                    if p_i['id'] in removed_pop_ids or pop_map[p_i['id']]['size'] >= consolidate_max_size[ic]: continue
+            # Group pop indices by residence index
+            for i in range(len(pops)):
+                if not pop_is_removed[i] and not ignore_res[pop_res_idx[i]]:
+                    res_groups[pop_res_idx[i]].append(i)
                     
-                    for j in range(i + 1, len(group)):
-                        p_j = pop_map[group[j]['id']]
-                        if p_j['id'] in removed_pop_ids or pop_map[p_j['id']]['size'] >= consolidate_max_size[ic]: continue
+            for res_idx, group in res_groups.items():
+                if len(group) < 2: continue
+                
+                group.sort(key=lambda idx: pop_size[idx])
+                
+                for i_idx in range(len(group)):
+                    pi = group[i_idx]
+                    if pop_is_removed[pi] or pop_size[pi] >= max_sz: continue
+                    
+                    lon1, lat1 = pt_coords[pop_job_idx[pi]]
+                    
+                    for j_idx in range(i_idx + 1, len(group)):
+                        pj = group[j_idx]
+                        if pop_is_removed[pj] or pop_size[pj] >= max_sz: continue
                         
-                        if dist_matrix[id_to_idx[p_i['jobId']], id_to_idx[p_j['jobId']]] <= consolidate_distance[ic]:
-                            target = get_target_id(p_i['jobId'], p_j['jobId'], pop_map[p_j['id']]['size'], delta_job)
-                            survivor, victim = (p_i, p_j) if p_i['jobId'] == target else (p_j, p_i)
+                        lon2, lat2 = pt_coords[pop_job_idx[pj]]
+                        dist = U.haversine(lon1, lat1, lon2, lat2)
+                        
+                        if dist <= max_dist:
+                            target = get_target_idx(pop_job_idx[pi], pop_job_idx[pj], pop_size[pj], delta_job)
+                            survivor, victim = (pi, pj) if pop_job_idx[pi] == target else (pj, pi)
                             
-                            v_size = pop_map[victim['id']]['size']
-                            source_id = victim['jobId']
-                            point_map[source_id]['jobs'] -= v_size
-                            point_map[target]['jobs'] += v_size
-                            delta_job[source_id] -= v_size
+                            v_size = pop_size[victim]
+                            src_idx = pop_job_idx[victim]
+                            
+                            # Update Point states
+                            pt_jobs[src_idx] -= v_size
+                            pt_jobs[target] += v_size
+                            delta_job[src_idx] -= v_size
                             delta_job[target] += v_size
+                            pt_totals[src_idx] -= v_size
+                            pt_totals[target] += v_size
                             
-                            if victim['id'] in point_map[source_id]['popIds']:
-                                point_map[source_id]['popIds'].remove(victim['id'])
-                            if survivor['id'] not in point_map[target]['popIds']:
-                                point_map[target]['popIds'].append(survivor['id'])
+                            # Update Pop states
+                            pop_size[survivor] += v_size
+                            pop_job_idx[survivor] = target
+                            pop_is_removed[victim] = True
                             
-                            pop_map[survivor['id']]['size'] += v_size
-                            pop_map[survivor['id']]['jobId'] = target
-                            removed_pop_ids.add(victim['id'])
-                            if victim['id'] == p_i['id']:
+                            if victim == pi:
                                 break
-                            
-                            if pop_map[survivor['id']]['size'] >= consolidate_max_size[ic]: break
+                            if pop_size[survivor] >= max_sz:
+                                break
+
+        # Reset point metadata
+        for i, p in enumerate(points):
+            p['residents'] = int(pt_residents[i])
+            p['jobs'] = int(pt_jobs[i])
+            p['popIds'] = [] 
+            
+        # Rebuild pop array and reconnect popIds
+        final_pops = []
+        for i in range(len(pops)):
+            if not pop_is_removed[i]:
+                pop_obj = pops[i]
+                # Write final sizes and IDs back to the dictionary
+                pop_obj['size'] = int(pop_size[i])
+                pop_obj['residenceId'] = pt_ids[pop_res_idx[i]]
+                pop_obj['jobId'] = pt_ids[pop_job_idx[i]]
+                
+                final_pops.append(pop_obj)
+                
+                # Re-link popIds to the points 
+                points[pop_res_idx[i]]['popIds'].append(pop_obj['id'])
+                points[pop_job_idx[i]]['popIds'].append(pop_obj['id'])
+                
+        demand['pops'] = final_pops
         
-        self['pops'] = [p for p in self['pops'] if p['id'] not in removed_pop_ids]
-        
+        # Update points
+        demand['points'] = [p for p in demand['points'] if len(p['popIds']) > 0]
+             
         # Ensure consistent points data
         self.update(self.sanitize(self))
-        """
-        # Re-build popIds list for points
-        for p in self['points']:
-            p['popIds'] = []
-        points_by_id = {p["id"]: p for p in self["points"]}
-        for p in self['pops']:
-            points_by_id[p['residenceId']]['popIds'].append(p['id'])
-            points_by_id[p['jobId']]['popIds'].append(p['id'])
-        # Clear out any points that now have no pops
-        self['points'] = [p for p in self['points'] if p['jobs'] + p['residents'] > 0]
-        """
-
+    
     def merge_identical_commutes(self):
         """
         Merges any pops that have the same exact home and work nodes.
@@ -1443,7 +1586,7 @@ class DemandData(dict):
         self['pops']   = [p for p in self['pops']   if p['id'] not in pops_to_remove]
         self['points'] = [p for p in self['points'] if p['id'] not in points_to_remove]
     
-    def _load_schema(self, filepath=None):
+    def _load_schema(self, filepath=None, special_demand_exp=None):
         """
         Private helper method to read data into structures.
         
@@ -1451,40 +1594,52 @@ class DemandData(dict):
         ------
         filepath: str. Path to schema file to load.
                        If None, defaults to the included special demand typing.
+        special_demand_exp: dict. Dictionary of special demand codes and their 
+                                  associated exponent for the distance factor 
+                                  when generating pops.
+                                  If None, defaults to Depot's built-in schema.
+                                  Example entries: "AIR" : 0.5, "UNI" : 2
+                                  Default: None
         """
-        self.special_demand_exp = {
-            "AIR": 0.5,
-            "AMU": 1,
-            "AQU": 1.2,
-            "BTH": 1,
-            "CNV": 3,
-            "CUL": 1,
-            "EVT": 1,
-            "EXT": 0.5,
-            "GOV": 1.2,
-            "HER": 0.5,
-            "HOS": 1.5,
-            "LIB": 2,
-            "MIL": 1.2,
-            "MUS": 1,
-            "NAT": 1,
-            "PORT": 0.7,
-            "PRK": 1.5,
-            "REL": 2,
-            "RST": 2,
-            "SCH": 2.5,
-            "SHP": 1.5,
-            "SPO": 1.5,
-            "UNI": 2,
-            "ZOO": 1,
-            "nature_park": 1,
-            "lake": 1.5,
-            "arena": 1,
-            "racetrack": 1,
-            "sports_complex": 1.1,
-            "sports_park": 1.2,
-            "stadium": 1
-        }
+        if special_demand_exp is not None:
+            assert isinstance(special_demand_exp, dict), "If specified, " \
+                                "special_demand_exp must be a dict.\n" \
+                               f"Received: {type(special_demand_exp)}"
+            self.special_demand_exp = special_demand_exp
+        else:
+            self.special_demand_exp = {
+                "AIR": 0.5,
+                "AMU": 1,
+                "AQU": 1.2,
+                "BTH": 1,
+                "CNV": 3,
+                "CUL": 1,
+                "EVT": 1,
+                "EXT": 0.5,
+                "GOV": 1.2,
+                "HER": 0.5,
+                "HOS": 1.5,
+                "LIB": 2,
+                "MIL": 1.2,
+                "MUS": 1,
+                "NAT": 1,
+                "PORT": 0.7,
+                "PRK": 1.5,
+                "REL": 2,
+                "RST": 2,
+                "SCH": 2.5,
+                "SHP": 1.5,
+                "SPO": 1.5,
+                "UNI": 2,
+                "ZOO": 1,
+                "nature_park": 1,
+                "lake": 1.5,
+                "arena": 1,
+                "racetrack": 1,
+                "sports_complex": 1.1,
+                "sports_park": 1.2,
+                "stadium": 1
+            }
         self.special_demand_codes = {}
         self.special_demand_descs = {}
         self.special_demand_types = {}
@@ -1558,7 +1713,7 @@ class DemandData(dict):
         -------
         exp: int or float. Exponent for distance decay factor when assigning pops.
         """
-        # Direct ID match (e.g. 'stadium', 'lake')
+        # Direct ID match (e.g., 'stadium', 'lake')
         if poi_id in self.special_demand_exp:
             return self.special_demand_exp[poi_id]
 
@@ -1716,11 +1871,22 @@ class DemandData(dict):
                       embedded links to your chosen license.
                       Default: GPLv3
         """
+        if self.verb:
+            print("Creating description.md file")
+            if license is None or license=="":
+                print("No license provided.")
+        
         # Ensure consistent points data
         self.update(self.sanitize(self))
         
-        with open(os.path.join(self.outputdir, "config.json"), "r") as f:
-            config = json.load(f)
+        try:
+            with open(os.path.join(self.outputdir, "config.json"), "r") as f:
+                config = json.load(f)
+        except Exception as e:
+            print(str(e))
+            print("config.json required to generate map description file. "
+                  "Ensure that file exists, or call create_config to make it.")
+            return
         
         with open(self.fpoints_schema, "r") as f:
             points = json.load(f)['points']
@@ -1734,7 +1900,7 @@ class DemandData(dict):
         # Header, top-level info
         description = f"""<h1>{config["name"]}</h1>\n"""\
         f"""<h3>{config["code"]} · {config["version"]}</h3>\n"""\
-        f"""<p><img src="https://raw.githubusercontent.com/Subway-Builder-Modded/registry/refs/heads/main/maps/{unidecode(mapID)}/gallery/screenshot1.png" alt="Map Preview"></p>\n"""\
+        f"""<p><img src="https://raw.githubusercontent.com/Subway-Builder-Modded/registry/refs/heads/main/maps/{unidecode(mapID)}/gallery/screenshot1.webp" alt="Map Preview"></p>\n"""\
         """<h2>Coverage</h2>\n"""\
         """<table style="width: auto">\n"""\
         f"""<tr><td><strong>Bounding box</strong></td><td>{str(config["bbox"]).replace("[","").replace("]","")}</td></tr>\n"""\
@@ -1836,7 +2002,7 @@ class DemandData(dict):
         description += """<h2>Additional Features</h2>\n"""\
         """<ul>\n"""\
         """<li><strong>Building Collision</strong> — A buildings index is included, providing in-game collision geometry for all non-filtered buildings. Buildings have foundations ranging from -10 m to -80 m, calculated based on the building's height and footprint; the in-game foundations map layer visualizes these.</li>\n"""\
-        """<li><strong>Water Depths</strong> — A water depth index is included, preventing tracks from being placed within the water.  GEBCO bathymetric data are used where available, and a flat -4 m depth is assumed everywhere else; the in-game ocean foundations map layer visualizes these.</li>\n"""\
+        """<li><strong>Water Depths</strong> — A water depth index is included, preventing tracks from being placed within the water.  GEBCO bathymetric data are used where available, and a flat -5 m depth is assumed everywhere else; the in-game ocean foundations map layer visualizes these.</li>\n"""\
         """<li><strong>Place Labels</strong> — The map includes city, suburb, and neighborhood labels extracted from selected OSM place tags.</li>\n"""\
         """</ul>\n"""\
         """<h2>Methodology</h2>\n"""\

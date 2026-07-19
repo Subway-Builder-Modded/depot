@@ -249,5 +249,23 @@ class TestDemandData(unittest.TestCase):
         assert np.sum([p.startswith('test') for p in obj['points'][1]['popIds']]) == \
                np.ceil(big_pop_size/max_pop_size)
 
+    ### Consolidation ###
+
+    def test_consolidate_pops_runs(self):
+        """ Consolidation merges small pops and keeps the data consistent """
+        obj = DemandData('test_demand_data.json', 'TEST', verb=False)
+        pops_before = len(obj['pops'])
+        size_before = np.sum([p['size'] for p in obj['pops']])
+
+        obj.consolidate_pops(consolidate_max_size=50, consolidate_distance=2000)
+
+        # Merging only ever removes pops, and moves their size onto the survivor
+        assert len(obj['pops']) <= pops_before
+        assert np.sum([p['size'] for p in obj['pops']]) == size_before
+        # Every remaining pop still points at a point that exists
+        point_ids = {p['id'] for p in obj['points']}
+        assert all(p['residenceId'] in point_ids and p['jobId'] in point_ids
+                   for p in obj['pops'])
+
 if __name__ == "__main__":
     unittest.main()

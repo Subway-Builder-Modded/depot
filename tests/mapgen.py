@@ -1,4 +1,6 @@
 import sys, os
+import json
+import tempfile
 import unittest
 from unittest.mock import patch
 import numpy as np
@@ -392,6 +394,27 @@ class TestMapGen(unittest.TestCase):
         mg = MapGen("TEST", [-118.5, 33.9, -118.4, 34.0],
                     osmpbf="dummy.osm.pbf", verb=False)
         mock_makedirs.assert_called()
+
+    ##### ocean depth tile tests #####
+
+    def test_ocean_depth_tiles_without_contours_file(self):
+        """Fall back to the depth index when no contours file sits next to it."""
+        with tempfile.TemporaryDirectory() as outputdir:
+            with patch('os.path.exists'):
+                mg = MapGen("TEST", [-118.5, 33.9, -118.4, 34.0], outputdir=outputdir,
+                            osmpbf="dummy.osm.pbf", verb=False)
+            mg.fdepths_contours = os.path.join(mg.city_dir,
+                                               "ocean_depth_index_contours.json.gz")
+            mg.bathy_data = {"depths": [{"b": [0, 0, 1, 1], "d": -5,
+                                         "p": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}]}
+            os.makedirs(mg.city_dir, exist_ok=True)
+            with patch.object(MapGen, "_run_command"):
+                mg._generate_ocean_depth_tiles()
+            with open(mg.ocean_foundations_geojson) as f:
+                features = json.load(f)["features"]
+
+        self.assertEqual(len(features), 1)
+        self.assertEqual(features[0]["properties"]["depth_min"], -5)
 
 if __name__ == "__main__":
     unittest.main()

@@ -1837,13 +1837,23 @@ class MapGen:
         self.ocean_foundations_geojson = os.path.join(self.city_dir, "ocean_foundations.geojson")
         self.ocean_foundations_mbtiles = os.path.join(self.city_dir, "ocean_foundations.mbtiles")
         if self.bathy_data is None:
-                self.load_bathymetry_data()
+            self.load_bathymetry_data()
         if os.path.exists(self.fdepths_contours):
             with gzip.open(self.fdepths_contours, "rt", encoding="utf-8") as f:
                 depth_contours = json.load(f)
                 if self.verb:
                     print("Loaded previously processed bathymetry data")
-        
+        else:
+            # A depth index written before the contours file was introduced is
+            # reused without one, so fall back to the index itself. It carries
+            # the same contours clipped to the grid cells, which tippecanoe
+            # renders into equivalent tiles. Pass reprocess_bathymetry_data=True
+            # to rebuild both files from the source bathymetry instead.
+            depth_contours = self.bathy_data
+            if self.verb:
+                print(f"{os.path.basename(self.fdepths_contours)} not found; "
+                      "using the cell-clipped contours from the depth index")
+
         # Process bathymetry data into geojson format
         bathy_geojson_data = {'type' : 'FeatureCollection', 'features' : []}
         for f in depth_contours['depths']:

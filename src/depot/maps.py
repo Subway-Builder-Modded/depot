@@ -1306,11 +1306,13 @@ class MapGen:
         
         if not self.reprocess_bathymetry_data:
             # Open and load the gzipped JSON data, if available
-            if os.path.exists(self.fdepths):
+            if os.path.exists(self.fdepths) and os.path.exists(self.fdepths_contours):
                 with gzip.open(self.fdepths, "rt", encoding="utf-8") as f:
                     self.bathy_data = json.load(f)
-                    if self.verb:
-                        print("Loaded previously processed bathymetry data")
+                with gzip.open(self.fdepths_contours, "rt", encoding="utf-8") as f:
+                    self.depth_contours = json.load(f)
+                if self.verb:
+                    print("Loaded previously processed bathymetry data")
                 return
         
         if self.verb:
@@ -1684,12 +1686,12 @@ class MapGen:
                     "p": [exterior] + holes,
                 })
         
-        unbroken_bathy_data = {
-            "depths": depth_entries
+        self.depth_contours = {
+            "depths": depth_entries.copy()
         }
 
         with gzip.open(self.fdepths_contours, "wt", encoding="utf-8") as f:
-            json.dump(unbroken_bathy_data, f, separators=(',', ':'))
+            json.dump(self.depth_contours, f, separators=(',', ':'))
 
         # Re-build STRtree using the flattened valid_water_contours 
         # (This ensures tree query indices perfectly match depth_entries positions)
@@ -1837,16 +1839,11 @@ class MapGen:
         self.ocean_foundations_geojson = os.path.join(self.city_dir, "ocean_foundations.geojson")
         self.ocean_foundations_mbtiles = os.path.join(self.city_dir, "ocean_foundations.mbtiles")
         if self.bathy_data is None:
-                self.load_bathymetry_data()
-        if os.path.exists(self.fdepths_contours):
-            with gzip.open(self.fdepths_contours, "rt", encoding="utf-8") as f:
-                depth_contours = json.load(f)
-                if self.verb:
-                    print("Loaded previously processed bathymetry data")
+            self.load_bathymetry_data()
         
         # Process bathymetry data into geojson format
         bathy_geojson_data = {'type' : 'FeatureCollection', 'features' : []}
-        for f in depth_contours['depths']:
+        for f in self.depth_contours['depths']:
             feat = {
                 'type' : 'Feature',
                 'geometry' : {'type' : 'Polygon', 'coordinates' : f['p']},

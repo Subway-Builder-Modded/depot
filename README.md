@@ -8,7 +8,7 @@ This library is confirmed to work with the following Python package versions:
 | Package            | Version       |
 | ------------------ |:-------------:|
 | python             | 3.13.9        |
-| duckdb             | 1.5.1         |
+| duckdb             | 1.5.3         |
 | geopandas          | 1.1.1         |
 | mapbox_vector_tile | 2.2.0         |
 | matplotlib         | 3.10.9        |

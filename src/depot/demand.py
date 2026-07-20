@@ -652,8 +652,8 @@ class DemandData(dict):
             f"Received:\nconsolidate_max_size = {consolidate_max_size}\n" + \
             f"consolidate_distance = {consolidate_distance}"
             
-        points = demand['points']
-        pops = demand['pops']
+        points = self['points']
+        pops = self['pops']
         
         # ID to Index mapping
         pt_ids = [p['id'] for p in points]
@@ -826,10 +826,10 @@ class DemandData(dict):
                 points[pop_res_idx[i]]['popIds'].append(pop_obj['id'])
                 points[pop_job_idx[i]]['popIds'].append(pop_obj['id'])
                 
-        demand['pops'] = final_pops
+        self['pops'] = final_pops
         
         # Update points
-        demand['points'] = [p for p in demand['points'] if len(p['popIds']) > 0]
+        self['points'] = [p for p in self['points'] if len(p['popIds']) > 0]
              
         # Ensure consistent points data
         self.update(self.sanitize(self))

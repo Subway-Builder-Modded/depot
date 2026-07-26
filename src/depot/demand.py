@@ -36,7 +36,7 @@ import time
 from tqdm import tqdm
 import networkx as nx
 import osmnx as ox
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, LineString
 from shapely.prepared import prep
 from sklearn.cluster import AgglomerativeClustering
 from unidecode import unidecode
@@ -409,7 +409,10 @@ class DemandData(dict):
             subprocess.run(f'docker rm {self.map_code}_contract', shell=True)
     
     def calculate_routes(self, routing_method="osmnx", bbox=None, 
-                               max_workers=1, osrm_port=5000):
+                               max_workers=1, osrm_port=5000,
+                               recalculate_routes=False,
+                               include_driving_paths=True,
+                               simplify_tol=0.0002):
         """
         Calculates driving distances and durations for population paths using
         either OSMnx (parallelized) or an already-running local OSRM server.
@@ -441,6 +444,13 @@ class DemandData(dict):
         osrm_port: int. Port number for local OSRM server.
                         Not used if using OSMnx for routing.
                         Default: 5000
+        recalculate_routes: bool. Determines whether to recalculate all routes.
+                                  Default: False
+        include_driving_paths: bool. Determines whether to store driving paths 
+                                     in the demand data file.
+                                     Default: True
+        simplify_tol: float. Tolerance to use when simplified driving paths.
+                             Default: 0.00005
         """
         assert routing_method in ['osmnx', 'osrm'], "Invalid routing_method.  "\
                                                     "Must be 'osmnx' or 'osrm'."
@@ -495,7 +505,8 @@ class DemandData(dict):
             # process_home_node must be defined globally in your script for Pool to pick it up
             process_home_node_worker = functools.partial(
                 process_home_node, demand=dict(self), G=G, 
-                points_by_id=points_by_id
+                points_by_id=points_by_id,
+                recalculate_routes=recalculate_routes
             )
 
             num_points = len(self["points"])
@@ -510,9 +521,12 @@ class DemandData(dict):
             for ret in results:
                 for pop in ret:
                     pops_by_id[pop["id"]]["drivingSeconds"] = pop["drivingSeconds"]
-                    pops_by_id[pop["id"]]["drivingDistance"] = pop[
-                        "drivingDistance"
-                    ]
+                    pops_by_id[pop["id"]]["drivingDistance"] = pop["drivingDistance"]
+                    if "drivingPath" in pop.keys() and include_driving_paths:
+                        line = LineString(driving_path)
+                        simplified_line = line.simplify(tolerance=simplify_tol, preserve_topology=True)
+                        driving_path = list(simplified_line.coords)
+                        pops_by_id[pop["id"]]["drivingPath"] = pop["drivingPath"]
 
         elif routing_method == "osrm":
             if self.verb:
@@ -539,7 +553,7 @@ class DemandData(dict):
                 pops = [p for p in self["pops"] if p["residenceId"] == home_id]
 
                 for p in pops:
-                    if p["drivingSeconds"] > 0:
+                    if p["drivingSeconds"] > 0 and not recalculate_routes:
                         # Already calculated - skip
                         continue
                     job_id = p["jobId"]
@@ -562,7 +576,9 @@ class DemandData(dict):
                     time.sleep(0.002)
                     url_route = (
                         f"http://localhost:{osrm_port}/route/v1/driving/"
-                        f"{home_node_loc[0]},{home_node_loc[1]};{job_node_loc[0]},{job_node_loc[1]}?overview=false"
+                        f"{home_node_loc[0]},{home_node_loc[1]};"
+                        f"{job_node_loc[0]},{job_node_loc[1]}?"
+                        f"overview=full&geometries=geojson"
                     )
                     response = requests.get(url_route)
 
@@ -591,7 +607,16 @@ class DemandData(dict):
                     else:
                         p["drivingSeconds"] = int(resp["routes"][0]["duration"])
                         p["drivingDistance"] = int(resp["routes"][0]["distance"])
+                        if include_driving_paths:
+                            try:
+                                line = LineString(resp["routes"][0]["geometry"]["coordinates"])
+                                driving_path = line.simplify(tolerance=simplify_tol, 
+                                                             preserve_topology=True)
+                                p["drivingPath"] = list(driving_path.coords)
+                            except:
+                                pass
             print("")
+        self.pops = pops
     
     def scale_demand(self, demand_factor=1):
         """
@@ -2035,7 +2060,7 @@ def process_home_node(i, demand, G, points_by_id):
     home_node = ox.nearest_nodes(G, Y=home_point['location'][1], X=home_point['location'][0])
     pops = [p for p in demand['pops'] if p['residenceId'] == home_id]
     for p in pops:
-        if p['drivingSeconds'] > 0:
+        if p['drivingSeconds'] > 0 and not recalculate_routes:
             # Already calculated - skip
             continue
         job_id = p['jobId']
@@ -2070,6 +2095,14 @@ def process_home_node(i, demand, G, points_by_id):
                 travel_time_in_seconds = 0
         # Add time penalties for intersections + traffic: 5 seconds per intersection
         travel_time_in_seconds += len(path_nodes) * 5
+        
+        # Extract the driving path coordinates [Longitude, Latitude] for consistency
+        try:
+            driving_path = [[G.nodes[node]['x'], G.nodes[node]['y']] \
+                            for node in path_nodes]
+            p['drivingPath']  = driving_path
+        except:
+            pass
         
         p['drivingSeconds']  = int(travel_time_in_seconds)
         p['drivingDistance'] = int(np.ceil(distance_in_meters))

@@ -1985,8 +1985,9 @@ class MapGen:
                         continue
                 elif kind in ['commercial', 'retail']:
                     dest, final_kind, final_rank = "commercial", kind, rank
-                elif kind in ['college', 'hospital', 'industrial', 
-                              'residential', 'school', 'university']:
+                elif kind in ['college', 'university', 'school']:
+                    dest, final_kind, final_rank = "commercial", "college", rank
+                elif kind in ['hospital', 'industrial', 'residential']:
                     dest, final_kind, final_rank = kind, kind, rank
                 elif kind == 'park':
                     dest, final_kind, final_rank = "landuse", kind, rank
@@ -1997,8 +1998,11 @@ class MapGen:
                     else:
                         # Not keeping this feature - drop it
                         continue
-
-                props = {'kind': final_kind, 'sort_rank': final_rank}
+                
+                if final_kind != "college":
+                    props = {'kind': final_kind, 'sort_rank': final_rank}
+                else:
+                    props = {'type': final_kind, 'sort_rank': final_rank}
                 if detail: props['kind_detail'] = detail
                 if 'ref' in old_props: props['ref'] = old_props['ref']
 
